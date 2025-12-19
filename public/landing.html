@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>iCloud Photo Album Viewer</title>
+  <meta name="description" content="Embed beautiful iCloud shared photo albums in your website with a simple modal script. Responsive, keyboard navigation, dark mode support.">
+  <meta name="keywords" content="icloud, photo album, embed, modal, gallery, photos">
+  <meta name="author" content="iCloud Photo Album Viewer">
+  
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="iCloud Photo Album Viewer">
+  <meta property="og:description" content="Embed beautiful iCloud shared photo albums in your website">
+  <meta property="og:site_name" content="iCloud Photo Album Viewer">
+  
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="iCloud Photo Album Viewer">
+  <meta name="twitter:description" content="Embed beautiful iCloud shared photo albums in your website">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      background: #f5f5f5;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      body {
+        background: #1a1a1a;
+        color: #e0e0e0;
+      }
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 50px;
+    }
+
+    h1 {
+      font-size: 36px;
+      margin-bottom: 10px;
+      color: #1a1a1a;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      h1 {
+        color: #ffffff;
+      }
+    }
+
+    .subtitle {
+      font-size: 18px;
+      color: #666;
+      margin-bottom: 30px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .subtitle {
+        color: #b0b0b0;
+      }
+    }
+
+    .section {
+      background: white;
+      border-radius: 12px;
+      padding: 30px;
+      margin-bottom: 30px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .section {
+        background: #2a2a2a;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      }
+    }
+
+    h2 {
+      font-size: 24px;
+      margin-bottom: 20px;
+      color: #1a1a1a;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      h2 {
+        color: #ffffff;
+      }
+    }
+
+    h3 {
+      font-size: 18px;
+      margin-top: 25px;
+      margin-bottom: 15px;
+      color: #333;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      h3 {
+        color: #e0e0e0;
+      }
+    }
+
+    p {
+      margin-bottom: 15px;
+      color: #555;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      p {
+        color: #b0b0b0;
+      }
+    }
+
+    .code-block {
+      background: #f8f8f8;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      padding: 20px;
+      margin: 15px 0;
+      overflow-x: auto;
+      font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .code-block {
+        background: #1a1a1a;
+        border-color: #333;
+        color: #e0e0e0;
+      }
+    }
+
+    code {
+      background: rgba(0, 0, 0, 0.05);
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+      font-size: 14px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      code {
+        background: rgba(255, 255, 255, 0.1);
+      }
+    }
+
+    .code-block code {
+      background: none;
+      padding: 0;
+    }
+
+    .demo-button {
+      display: inline-block;
+      padding: 12px 24px;
+      background: #007AFF;
+      color: white;
+      text-decoration: none;
+      border-radius: 6px;
+      font-size: 16px;
+      margin: 10px 10px 10px 0;
+      cursor: pointer;
+      border: none;
+      transition: background 0.2s ease;
+    }
+
+    .demo-button:hover {
+      background: #0056CC;
+    }
+
+    .feature-list {
+      list-style: none;
+      padding: 0;
+    }
+
+    .feature-list li {
+      padding: 10px 0;
+      padding-left: 30px;
+      position: relative;
+      color: #555;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .feature-list li {
+        color: #b0b0b0;
+      }
+    }
+
+    .feature-list li:before {
+      content: "✓";
+      position: absolute;
+      left: 0;
+      color: #007AFF;
+      font-weight: bold;
+    }
+
+    .url-display {
+      background: #f0f0f0;
+      padding: 12px;
+      border-radius: 6px;
+      font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+      font-size: 13px;
+      word-break: break-all;
+      margin: 10px 0;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .url-display {
+        background: #1a1a1a;
+        color: #e0e0e0;
+      }
+    }
+
+    .url-display a {
+      color: #007AFF;
+      text-decoration: none;
+    }
+
+    .url-display a:hover {
+      text-decoration: underline;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .url-display a {
+        color: #5AC8FA;
+      }
+    }
+
+    .highlight {
+      background: #fff3cd;
+      padding: 2px 4px;
+      border-radius: 3px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .highlight {
+        background: #4a3a00;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>iCloud Photo Album Viewer</h1>
+      <p class="subtitle">Embed beautiful iCloud shared photo albums in your website</p>
+    </header>
+
+    <section class="section">
+      <h2>Quick Start</h2>
+      <p>Add this script to your HTML page:</p>
+      <div class="code-block" id="script-tag"></div>
+      
+      <p>Then use it in your code:</p>
+      <div class="code-block">
+<code>&lt;button onclick="icloudAlbumModal('YOUR_ALBUM_TOKEN')"&gt;View Photos&lt;/button&gt;</code>
+      </div>
+
+      <button class="demo-button" onclick="demoModal()">Try Demo</button>
+    </section>
+
+    <section class="section">
+      <h2>Features</h2>
+      <ul class="feature-list">
+        <li>Full-screen modal overlay with smooth animations</li>
+        <li>Responsive grid view with hover effects</li>
+        <li>Full-screen lightbox for viewing individual photos</li>
+        <li>Keyboard navigation (arrow keys, ESC)</li>
+        <li>Touch/swipe support for mobile devices</li>
+        <li>Dark mode support (follows system preferences)</li>
+        <li>Isolated styles (won't conflict with your page)</li>
+        <li>Fast caching for improved performance</li>
+      </ul>
+    </section>
+
+    <section class="section">
+      <h2>Usage Examples</h2>
+      
+      <h3>As a Button</h3>
+      <div class="code-block">
+<code>&lt;button onclick="icloudAlbumModal('B1v532ODWVjCzg')"&gt;
+  View Photos
+&lt;/button&gt;</code>
+      </div>
+
+      <h3>As a Link</h3>
+      <div class="code-block">
+<code>&lt;a href="#" onclick="icloudAlbumModal('B1v532ODWVjCzg'); return false;"&gt;
+  View Photos
+&lt;/a&gt;</code>
+      </div>
+
+      <h3>Programmatically</h3>
+      <div class="code-block">
+<code>&lt;script&gt;
+  // Open modal programmatically
+  icloudAlbumModal('B1v532ODWVjCzg');
+&lt;/script&gt;</code>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>API Endpoints</h2>
+      
+      <h3>View Album</h3>
+      <p>Access albums directly via URL:</p>
+      <div class="url-display" id="album-url"></div>
+
+      <h3>API Endpoint</h3>
+      <p>Fetch album data as JSON:</p>
+      <div class="url-display" id="api-url"></div>
+    </section>
+
+    <section class="section">
+      <h2>How It Works</h2>
+      <p>The modal script creates a full-screen overlay with an iframe that loads your album viewer. The album viewer fetches photos from iCloud and displays them in a beautiful, responsive interface.</p>
+      
+      <p><strong>Album Token:</strong> To get an album token, share an iCloud photo album and extract the token from the share URL. The token is the unique identifier in the URL.</p>
+    </section>
+  </div>
+
+  <script>
+    // Build URLs based on current hostname and protocol
+    const baseUrl = window.location.origin;
+    const scriptUrl = `${baseUrl}/icloud-photo-album-modal.js`;
+    const exampleToken = 'B1v532ODWVjCzg';
+
+    // Update script tag
+    document.getElementById('script-tag').innerHTML = `<code>&lt;script src="${scriptUrl}"&gt;&lt;/script&gt;</code>`;
+
+    // Update API URLs (make them clickable)
+    const albumUrl = `${baseUrl}/${exampleToken}`;
+    const apiUrl = `${baseUrl}/api/album/${exampleToken}`;
+    
+    document.getElementById('album-url').innerHTML = `<a href="${albumUrl}" target="_blank" rel="noopener noreferrer">${albumUrl}</a>`;
+    document.getElementById('api-url').innerHTML = `<a href="${apiUrl}" target="_blank" rel="noopener noreferrer">${apiUrl}</a>`;
+
+    // Demo function
+    function demoModal() {
+      if (typeof icloudAlbumModal === 'function') {
+        icloudAlbumModal(exampleToken);
+      } else {
+        // Load script if not already loaded
+        const script = document.createElement('script');
+        script.src = scriptUrl;
+        script.onload = () => {
+          icloudAlbumModal(exampleToken);
+        };
+        document.head.appendChild(script);
+      }
+    }
+  </script>
+  <script src="icloud-photo-album-modal.js"></script>
+</body>
+</html>
+

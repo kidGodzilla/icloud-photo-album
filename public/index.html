@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#007AFF">
+  <meta name="description" content="View iCloud shared photo albums in a beautiful, responsive gallery with keyboard navigation and dark mode support.">
+  <meta name="keywords" content="icloud, photo album, gallery, photos, shared album">
+  <meta name="application-name" content="Photo Album">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Photo Album">
+  
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="iCloud Photo Album">
+  <meta property="og:description" content="View iCloud shared photo albums">
+  
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="iCloud Photo Album">
+  <meta name="twitter:description" content="View iCloud shared photo albums">
+  
+  <title>iCloud Photo Album</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: #f5f5f5;
+      color: #333;
+      overflow-x: hidden;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      body {
+        background: #1a1a1a;
+        color: #e0e0e0;
+      }
+
+      .header h1 {
+        color: #ffffff;
+      }
+
+      .header p {
+        color: #b0b0b0;
+      }
+
+      .loading {
+        color: #888;
+      }
+
+      .error {
+        color: #ff6b6b;
+      }
+
+      .photo-item {
+        background: #2a2a2a;
+      }
+
+      .photo-item:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      }
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+
+    .header h1 {
+      font-size: 24px;
+      font-weight: 600;
+      color: #1a1a1a;
+      margin-bottom: 8px;
+    }
+
+    .header p {
+      color: #666;
+      font-size: 14px;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 60px 20px;
+      color: #999;
+    }
+
+    .error {
+      text-align: center;
+      padding: 60px 20px;
+      color: #d32f2f;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px;
+      padding-bottom: 20px;
+    }
+
+    @media (max-width: 768px) {
+      .grid {
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 8px;
+      }
+    }
+
+    .photo-item {
+      position: relative;
+      aspect-ratio: 1;
+      overflow: hidden;
+      cursor: pointer;
+      background: #e0e0e0;
+      border-radius: 4px;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .photo-item:hover {
+      transform: scale(1.02);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+
+    .photo-item img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .lightbox {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.95);
+      z-index: 1000;
+      cursor: pointer;
+    }
+
+    .lightbox.active {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .lightbox-content {
+      position: relative;
+      max-width: 90vw;
+      max-height: 90vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .lightbox-image {
+      max-width: 100%;
+      max-height: 90vh;
+      object-fit: contain;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+
+    .lightbox-nav {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      background: rgba(255, 255, 255, 0.1);
+      border: none;
+      color: white;
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s ease;
+      backdrop-filter: blur(10px);
+      line-height: 1;
+      padding: 0;
+      margin: 0;
+      box-sizing: border-box;
+      z-index: 10;
+    }
+
+    .lightbox-nav:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .lightbox-nav-icon {
+      display: inline-block;
+      transform: translate(1px, -1px);
+    }
+
+    .lightbox-nav.prev {
+      left: 20px;
+    }
+
+    .lightbox-nav.prev .lightbox-nav-icon {
+      transform: translate(0px, -1px);
+    }
+
+    .lightbox-nav.next {
+      right: 20px;
+    }
+
+    .lightbox-nav.next .lightbox-nav-icon {
+      transform: translate(1px, -1px);
+    }
+
+    .lightbox-close {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: rgba(255, 255, 255, 0.1);
+      border: none;
+      color: white;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s ease;
+      backdrop-filter: blur(10px);
+      font-family: Arial, sans-serif;
+      line-height: 1;
+      padding: 0;
+      margin: 0;
+      box-sizing: border-box;
+    }
+
+    .lightbox-close:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .lightbox-info {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.6);
+      color: white;
+      padding: 12px 20px;
+      border-radius: 20px;
+      font-size: 14px;
+      backdrop-filter: blur(10px);
+      text-align: center;
+      max-width: 80%;
+    }
+
+    .lightbox-caption {
+      margin-bottom: 4px;
+      font-weight: 500;
+    }
+
+    .lightbox-meta {
+      font-size: 12px;
+      opacity: 0.8;
+    }
+
+    .photo-counter {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      background: rgba(0, 0, 0, 0.6);
+      color: white;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 14px;
+      backdrop-filter: blur(10px);
+    }
+
+    @media (max-width: 768px) {
+      .lightbox-nav {
+        width: 40px;
+        height: 40px;
+        font-size: 16px;
+      }
+
+      .lightbox-nav.prev {
+        left: 10px;
+      }
+
+      .lightbox-nav.next {
+        right: 10px;
+      }
+
+      .lightbox-close {
+        top: 10px;
+        right: 10px;
+        width: 36px;
+        height: 36px;
+        font-size: 20px;
+      }
+
+      .lightbox-info {
+        bottom: 10px;
+        padding: 10px 16px;
+        font-size: 12px;
+      }
+
+      .photo-counter {
+        top: 10px;
+        left: 10px;
+        padding: 6px 12px;
+        font-size: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1 id="album-title">Photo Album</h1>
+      <p id="album-subtitle">Loading...</p>
+    </div>
+    <div id="loading" class="loading">Loading photos...</div>
+    <div id="error" class="error" style="display: none;"></div>
+    <div id="grid" class="grid" style="display: none;"></div>
+  </div>
+
+  <div id="lightbox" class="lightbox">
+    <div class="photo-counter" id="photo-counter"></div>
+    <button class="lightbox-close" id="lightbox-close" aria-label="Close">×</button>
+    <button class="lightbox-nav prev" id="lightbox-prev" aria-label="Previous"><span class="lightbox-nav-icon">‹</span></button>
+    <div class="lightbox-content">
+      <img id="lightbox-image" class="lightbox-image" alt="">
+      <div class="lightbox-info" id="lightbox-info">
+        <div class="lightbox-caption" id="lightbox-caption"></div>
+        <div class="lightbox-meta" id="lightbox-meta"></div>
+      </div>
+    </div>
+    <button class="lightbox-nav next" id="lightbox-next" aria-label="Next"><span class="lightbox-nav-icon">›</span></button>
+  </div>
+
+  <script>
+    let photos = [];
+    let currentIndex = 0;
+    let touchStartX = 0;
+    let touchEndX = 0;
+
+    // Get album ID from URL path (e.g., /B1v532ODWVjCzg)
+    const pathParts = window.location.pathname.split('/').filter(Boolean);
+    const albumId = pathParts[0] || pathParts[pathParts.length - 1];
+
+    // Fallback to query parameter for backwards compatibility
+    const urlParams = new URLSearchParams(window.location.search);
+    const token = albumId || urlParams.get('token');
+
+    if (!token) {
+      document.getElementById('error').textContent = 'No album ID provided. Access via /:albumId (e.g., /B1v532ODWVjCzg)';
+      document.getElementById('error').style.display = 'block';
+      document.getElementById('loading').style.display = 'none';
+    } else {
+      loadAlbum(token);
+    }
+
+    async function loadAlbum(token) {
+      try {
+        const response = await fetch(`/api/album/${token}`);
+        if (!response.ok) {
+          throw new Error(`Failed to load album: ${response.statusText}`);
+        }
+        const data = await response.json();
+        
+        photos = data.photos || [];
+        
+        // Sort photos by dateCreated (newest first)
+        photos.sort((a, b) => {
+          const dateA = a.dateCreated ? new Date(a.dateCreated).getTime() : -Infinity;
+          const dateB = b.dateCreated ? new Date(b.dateCreated).getTime() : -Infinity;
+          // Return negative if A should come before B (A is older)
+          // Return positive if B should come before A (B is newer)
+          return dateB - dateA; // Descending order: newer dates (larger) come first
+        });
+        
+        if (photos.length === 0) {
+          document.getElementById('error').textContent = 'No photos found in this album.';
+          document.getElementById('error').style.display = 'block';
+          document.getElementById('loading').style.display = 'none';
+          return;
+        }
+
+        // Update header
+        if (data.metadata) {
+          const firstName = data.metadata.userFirstName || '';
+          const lastName = data.metadata.userLastName || '';
+          if (firstName || lastName) {
+            document.getElementById('album-title').textContent = `${firstName} ${lastName}'s Album`;
+          }
+          document.getElementById('album-subtitle').textContent = `${photos.length} photo${photos.length !== 1 ? 's' : ''}`;
+        }
+
+        renderGrid();
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('grid').style.display = 'grid';
+      } catch (error) {
+        console.error('Error loading album:', error);
+        document.getElementById('error').textContent = `Error: ${error.message}`;
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('loading').style.display = 'none';
+      }
+    }
+
+    function getBestThumbnail(photo) {
+      // Prefer 257, then 333, then smallest available
+      const sizes = Object.keys(photo.derivatives).map(Number).sort((a, b) => a - b);
+      const preferred = sizes.find(s => s >= 257) || sizes[0];
+      return photo.derivatives[preferred.toString()];
+    }
+
+    function getBestImage(photo) {
+      // Get the largest available image
+      const sizes = Object.keys(photo.derivatives).map(Number).sort((a, b) => b - a);
+      return photo.derivatives[sizes[0].toString()];
+    }
+
+    function renderGrid() {
+      const grid = document.getElementById('grid');
+      grid.innerHTML = '';
+
+      photos.forEach((photo, index) => {
+        const thumbnail = getBestThumbnail(photo);
+        const item = document.createElement('div');
+        item.className = 'photo-item';
+        item.innerHTML = `<img src="${thumbnail.url}" alt="" loading="lazy">`;
+        item.addEventListener('click', () => openLightbox(index));
+        grid.appendChild(item);
+      });
+    }
+
+    function openLightbox(index) {
+      currentIndex = index;
+      const lightbox = document.getElementById('lightbox');
+      lightbox.classList.add('active');
+      updateLightbox();
+      document.body.style.overflow = 'hidden';
+      
+      // Notify parent if in iframe
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: 'icloud-album-lightbox-open' }, '*');
+      }
+    }
+
+    function closeLightbox() {
+      const lightbox = document.getElementById('lightbox');
+      lightbox.classList.remove('active');
+      document.body.style.overflow = '';
+      
+      // Notify parent if in iframe
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: 'icloud-album-lightbox-close' }, '*');
+      }
+    }
+
+    function updateLightbox() {
+      const photo = photos[currentIndex];
+      const image = getBestImage(photo);
+      const img = document.getElementById('lightbox-image');
+      img.src = image.url;
+
+      // Update counter
+      document.getElementById('photo-counter').textContent = `${currentIndex + 1} / ${photos.length}`;
+
+      // Update info
+      const caption = photo.caption || '';
+      const date = photo.dateCreated ? new Date(photo.dateCreated).toLocaleDateString() : '';
+      const contributor = photo.contributorFullName || '';
+
+      document.getElementById('lightbox-caption').textContent = caption || 'Untitled';
+      document.getElementById('lightbox-caption').style.display = caption ? 'block' : 'none';
+
+      const metaParts = [date, contributor].filter(Boolean);
+      document.getElementById('lightbox-meta').textContent = metaParts.join(' • ');
+      document.getElementById('lightbox-info').style.display = metaParts.length > 0 || caption ? 'block' : 'none';
+    }
+
+    function nextPhoto() {
+      if (currentIndex < photos.length - 1) {
+        currentIndex++;
+        updateLightbox();
+      }
+    }
+
+    function prevPhoto() {
+      if (currentIndex > 0) {
+        currentIndex--;
+        updateLightbox();
+      }
+    }
+
+    // Event listeners
+    document.getElementById('lightbox-close').addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeLightbox();
+    });
+
+    document.getElementById('lightbox-prev').addEventListener('click', (e) => {
+      e.stopPropagation();
+      prevPhoto();
+    });
+
+    document.getElementById('lightbox-next').addEventListener('click', (e) => {
+      e.stopPropagation();
+      nextPhoto();
+    });
+
+    document.getElementById('lightbox').addEventListener('click', (e) => {
+      if (e.target.id === 'lightbox' || e.target.id === 'lightbox-image') {
+        closeLightbox();
+      }
+    });
+
+    // Keyboard navigation
+    document.addEventListener('keydown', (e) => {
+      const lightbox = document.getElementById('lightbox');
+      
+      if (e.key === 'Escape') {
+        if (lightbox.classList.contains('active')) {
+          closeLightbox();
+        } else if (window.parent !== window) {
+          // If in iframe and lightbox not open, close parent modal
+          window.parent.postMessage({ type: 'icloud-album-close' }, '*');
+        }
+      } else if (lightbox.classList.contains('active')) {
+        if (e.key === 'ArrowLeft') {
+          prevPhoto();
+        } else if (e.key === 'ArrowRight') {
+          nextPhoto();
+        }
+      }
+    });
+
+    // Touch/swipe support
+    document.getElementById('lightbox-image').addEventListener('touchstart', (e) => {
+      touchStartX = e.changedTouches[0].screenX;
+    });
+
+    document.getElementById('lightbox-image').addEventListener('touchend', (e) => {
+      touchEndX = e.changedTouches[0].screenX;
+      handleSwipe();
+    });
+
+    function handleSwipe() {
+      const swipeThreshold = 50;
+      const diff = touchStartX - touchEndX;
+
+      if (Math.abs(diff) > swipeThreshold) {
+        if (diff > 0) {
+          nextPhoto();
+        } else {
+          prevPhoto();
+        }
+      }
+    }
+  </script>
+</body>
+</html>
+
