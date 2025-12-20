@@ -1,4 +1,6 @@
 node_modules
 package-lock.json
 .env
+cache/
 B1v532ODWVjCzg.json
+.DS_Store

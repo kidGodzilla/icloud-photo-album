@@ -17,6 +17,8 @@
   let modal = null;
   let iframe = null;
   let closeBtn = null;
+  let touchStartY = 0;
+  let touchEndY = 0;
 
   function createModal() {
     if (modal) return modal;
@@ -106,6 +108,22 @@
         closeModal();
       }
     };
+
+    // Swipe down to close
+    modal.addEventListener('touchstart', (e) => {
+      touchStartY = e.changedTouches[0].screenY;
+    });
+
+    modal.addEventListener('touchend', (e) => {
+      touchEndY = e.changedTouches[0].screenY;
+      const diffY = touchStartY - touchEndY;
+      const swipeThreshold = 100; // Require more movement for modal close
+      
+      // Swipe down to close
+      if (diffY < -swipeThreshold) {
+        closeModal();
+      }
+    });
 
     // Close on Escape key (when modal has focus)
     document.addEventListener('keydown', (e) => {

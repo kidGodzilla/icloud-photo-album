@@ -164,14 +164,39 @@
       display: flex;
       align-items: center;
       justify-content: center;
+      /* Width and aspect ratio set dynamically based on image dimensions */
     }
 
-    .lightbox-image {
+    .lightbox-image,
+    .lightbox-video {
       max-width: 100%;
       max-height: 90vh;
       object-fit: contain;
       user-select: none;
       -webkit-user-drag: none;
+    }
+
+    .lightbox-video {
+      width: 100%;
+      height: auto;
+    }
+
+    .lightbox-thumbnail {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      z-index: 1;
+      transition: opacity 0.3s ease;
+      /* Constrained by parent .lightbox-content which has the correct aspect ratio */
+    }
+
+    .lightbox-image.loaded + .lightbox-thumbnail,
+    .lightbox-video.loaded + .lightbox-thumbnail {
+      opacity: 0;
+      pointer-events: none;
     }
 
     .lightbox-nav {
@@ -342,7 +367,9 @@
     <button class="lightbox-close" id="lightbox-close" aria-label="Close">×</button>
     <button class="lightbox-nav prev" id="lightbox-prev" aria-label="Previous"><span class="lightbox-nav-icon">‹</span></button>
     <div class="lightbox-content">
-      <img id="lightbox-image" class="lightbox-image" alt="">
+      <img id="lightbox-thumbnail" class="lightbox-thumbnail" alt="" style="display: none;">
+      <img id="lightbox-image" class="lightbox-image" alt="" style="display: none;">
+      <video id="lightbox-video" class="lightbox-video" controls style="display: none;"></video>
       <div class="lightbox-info" id="lightbox-info">
         <div class="lightbox-caption" id="lightbox-caption"></div>
         <div class="lightbox-meta" id="lightbox-meta"></div>
@@ -356,6 +383,9 @@
     let currentIndex = 0;
     let touchStartX = 0;
     let touchEndX = 0;
+    let touchStartY = 0;
+    let touchEndY = 0;
+    let reloadTimer = null;
 
     // Get album ID from URL path (e.g., /B1v532ODWVjCzg)
     const pathParts = window.location.pathname.split('/').filter(Boolean);
@@ -373,7 +403,7 @@
       loadAlbum(token);
     }
 
-    async function loadAlbum(token) {
+    async function loadAlbum(token, isReload = false) {
       try {
         const response = await fetch(`/api/album/${token}`);
         if (!response.ok) {
@@ -412,6 +442,17 @@
         renderGrid();
         document.getElementById('loading').style.display = 'none';
         document.getElementById('grid').style.display = 'grid';
+
+        // Handle stale-while-revalidate: reload after 1 minute if reloading flag is set
+        if (data.reloading && !isReload) {
+          clearTimeout(reloadTimer);
+          reloadTimer = setTimeout(() => {
+            console.log('Reloading album data...');
+            loadAlbum(token, true);
+          }, 60000); // 1 minute
+        } else if (!data.reloading) {
+          clearTimeout(reloadTimer);
+        }
       } catch (error) {
         console.error('Error loading album:', error);
         document.getElementById('error').textContent = `Error: ${error.message}`;
@@ -421,10 +462,68 @@
     }
 
     function getBestThumbnail(photo) {
-      // Prefer 257, then 333, then smallest available
-      const sizes = Object.keys(photo.derivatives).map(Number).sort((a, b) => a - b);
+      // Safety check
+      if (!photo || !photo.derivatives || Object.keys(photo.derivatives).length === 0) {
+        return null;
+      }
+      
+      // For videos, prefer JPG thumbnails over MP4
+      if (isVideo(photo)) {
+        const jpgDerivatives = Object.keys(photo.derivatives)
+          .filter(size => {
+            const derivative = photo.derivatives[size];
+            // Check for both .JPG and .jpg (case insensitive)
+            return derivative && derivative.url && 
+                   (derivative.url.includes('.JPG') || derivative.url.includes('.jpg')) &&
+                   !derivative.url.includes('.mp4') && !derivative.url.includes('.MP4');
+          })
+          .map(Number)
+          .sort((a, b) => a - b);
+        
+        if (jpgDerivatives.length > 0) {
+          // Prefer 257, then 333, then smallest available JPG thumbnail
+          const preferred = jpgDerivatives.find(s => s >= 257) || jpgDerivatives[0];
+          const result = photo.derivatives[preferred.toString()];
+          if (result && result.url) return result;
+        }
+        // Fallback: if no JPG found, return smallest non-video derivative
+        const nonVideoDerivatives = Object.keys(photo.derivatives)
+          .filter(size => {
+            const derivative = photo.derivatives[size];
+            return derivative && derivative.url && 
+                   !derivative.url.includes('.mp4') && 
+                   !derivative.url.includes('.MP4');
+          })
+          .map(Number)
+          .sort((a, b) => a - b);
+        
+        if (nonVideoDerivatives.length > 0) {
+          const result = photo.derivatives[nonVideoDerivatives[0].toString()];
+          if (result && result.url) return result;
+        }
+      }
+      
+      // For photos, prefer 257, then 333, then smallest available
+      const sizes = Object.keys(photo.derivatives)
+        .filter(size => {
+          const derivative = photo.derivatives[size];
+          // Exclude videos
+          return derivative && derivative.url && 
+                 !derivative.url.includes('.mp4') && 
+                 !derivative.url.includes('.MP4');
+        })
+        .map(Number)
+        .sort((a, b) => a - b);
+      
+      if (sizes.length === 0) {
+        // Last resort: return any derivative with a URL
+        const anyDerivative = Object.values(photo.derivatives).find(d => d && d.url);
+        return anyDerivative || null;
+      }
+      
       const preferred = sizes.find(s => s >= 257) || sizes[0];
-      return photo.derivatives[preferred.toString()];
+      const result = photo.derivatives[preferred.toString()];
+      return (result && result.url) ? result : null;
     }
 
     function getBestImage(photo) {
@@ -433,15 +532,50 @@
       return photo.derivatives[sizes[0].toString()];
     }
 
+    function getBestVideo(photo) {
+      // Get the largest available video
+      const videoSizes = Object.keys(photo.derivatives)
+        .filter(size => {
+          const derivative = photo.derivatives[size];
+          return derivative.url && derivative.url.includes('.mp4');
+        })
+        .map(Number)
+        .sort((a, b) => b - a);
+      
+      if (videoSizes.length > 0) {
+        return photo.derivatives[videoSizes[0].toString()];
+      }
+      return null;
+    }
+
+    function isVideo(photo) {
+      return photo.mediaAssetType === 'video' || 
+             (photo.derivatives && Object.values(photo.derivatives).some(d => d.url && d.url.includes('.mp4')));
+    }
+
     function renderGrid() {
       const grid = document.getElementById('grid');
       grid.innerHTML = '';
 
       photos.forEach((photo, index) => {
         const thumbnail = getBestThumbnail(photo);
+        
+        // Skip photos without valid thumbnails
+        if (!thumbnail || !thumbnail.url) {
+          console.warn('Skipping photo without valid thumbnail:', photo);
+          return;
+        }
+        
         const item = document.createElement('div');
         item.className = 'photo-item';
-        item.innerHTML = `<img src="${thumbnail.url}" alt="" loading="lazy">`;
+        
+        // Create img element and store reference for lightbox reuse
+        const img = document.createElement('img');
+        img.src = thumbnail.url;
+        img.alt = '';
+        img.loading = 'lazy';
+        img.dataset.photoIndex = index; // Store index for quick lookup
+        item.appendChild(img);
         item.addEventListener('click', () => openLightbox(index));
         grid.appendChild(item);
       });
@@ -450,6 +584,19 @@
     function openLightbox(index) {
       currentIndex = index;
       const lightbox = document.getElementById('lightbox');
+      
+      // Show thumbnail immediately before opening lightbox (if available)
+      const gridImg = document.querySelector(`.photo-item img[data-photo-index="${index}"]`);
+      const thumbnail = document.getElementById('lightbox-thumbnail');
+      
+      if (gridImg && gridImg.complete && gridImg.naturalWidth > 0) {
+        // Pre-populate thumbnail with already-loaded grid image
+        thumbnail.src = gridImg.src;
+        thumbnail.style.display = 'block';
+        thumbnail.style.opacity = '1';
+        thumbnail.style.filter = 'none';
+      }
+      
       lightbox.classList.add('active');
       updateLightbox();
       document.body.style.overflow = 'hidden';
@@ -461,6 +608,12 @@
     }
 
     function closeLightbox() {
+      // Pause video if playing
+      const video = document.getElementById('lightbox-video');
+      if (video && !video.paused) {
+        video.pause();
+      }
+      
       const lightbox = document.getElementById('lightbox');
       lightbox.classList.remove('active');
       document.body.style.overflow = '';
@@ -473,9 +626,93 @@
 
     function updateLightbox() {
       const photo = photos[currentIndex];
-      const image = getBestImage(photo);
       const img = document.getElementById('lightbox-image');
-      img.src = image.url;
+      const video = document.getElementById('lightbox-video');
+      const thumbnail = document.getElementById('lightbox-thumbnail');
+      const isVideoMedia = isVideo(photo);
+
+      // Hide images initially (but preserve thumbnail if already set in openLightbox)
+      img.style.display = 'none';
+      video.style.display = 'none';
+      img.classList.remove('loaded');
+      video.classList.remove('loaded');
+      
+      // Only hide thumbnail if it wasn't already set in openLightbox
+      const thumbnailAlreadySet = thumbnail.src && thumbnail.style.display !== 'none' && thumbnail.complete;
+      if (!thumbnailAlreadySet) {
+        thumbnail.style.display = 'none';
+      }
+
+      if (isVideoMedia) {
+        // Handle video
+        thumbnail.style.display = 'none'; // Hide thumbnail for videos
+        const videoDerivative = getBestVideo(photo);
+        if (videoDerivative) {
+          video.src = videoDerivative.url;
+          video.style.display = 'block';
+          video.load();
+        }
+      } else {
+        // Try to reuse already-loaded thumbnail from grid - use the EXACT same image
+        const gridImg = document.querySelector(`.photo-item img[data-photo-index="${currentIndex}"]`);
+        const fullImage = getBestImage(photo);
+        const lightboxContent = document.querySelector('.lightbox-content');
+        
+        // Set aspect ratio for lightbox content based on full image dimensions to prevent reflow
+        // Account for viewport constraints (max 90vw x 90vh)
+        let displayWidth, displayHeight;
+        if (fullImage.width && fullImage.height) {
+          const maxWidth = window.innerWidth * 0.9;
+          const maxHeight = window.innerHeight * 0.9;
+          
+          // Calculate how the image will actually be displayed (constrained by viewport)
+          const imageAspectRatio = fullImage.width / fullImage.height;
+          const viewportAspectRatio = maxWidth / maxHeight;
+          
+          if (imageAspectRatio > viewportAspectRatio) {
+            // Image is wider - constrained by width
+            displayWidth = Math.min(fullImage.width, maxWidth);
+            displayHeight = displayWidth / imageAspectRatio;
+          } else {
+            // Image is taller - constrained by height
+            displayHeight = Math.min(fullImage.height, maxHeight);
+            displayWidth = displayHeight * imageAspectRatio;
+          }
+          
+          // Set aspect ratio and size on lightbox content
+          lightboxContent.style.aspectRatio = `${displayWidth} / ${displayHeight}`;
+          lightboxContent.style.width = `${displayWidth}px`;
+          lightboxContent.style.maxWidth = '90vw';
+          lightboxContent.style.maxHeight = '90vh';
+        }
+        
+        // Show thumbnail immediately - MUST use the exact same src from grid
+        if (gridImg && gridImg.src) {
+          // Use the EXACT same src from the grid image (already loaded and cached)
+          thumbnail.src = gridImg.src;
+          thumbnail.style.display = 'block';
+          thumbnail.style.opacity = '1';
+          thumbnail.style.filter = 'none'; // No blur for already-loaded image
+        } else {
+          // Fallback: if grid image not found, get thumbnail (shouldn't happen normally)
+          const thumbnailDerivative = getBestThumbnail(photo);
+          if (thumbnailDerivative && thumbnailDerivative.url !== fullImage.url) {
+            thumbnail.src = thumbnailDerivative.url;
+            thumbnail.style.display = 'block';
+            thumbnail.style.opacity = '0.5';
+            thumbnail.style.filter = 'blur(10px)';
+          }
+        }
+        
+        // Load full image
+        img.onload = function() {
+          img.classList.add('loaded');
+          img.style.display = 'block';
+          // Hide thumbnail immediately
+          thumbnail.style.display = 'none';
+        };
+        img.src = fullImage.url;
+      }
 
       // Update counter
       document.getElementById('photo-counter').textContent = `${currentIndex + 1} / ${photos.length}`;
@@ -495,6 +732,11 @@
 
     function nextPhoto() {
       if (currentIndex < photos.length - 1) {
+        // Pause video if playing
+        const video = document.getElementById('lightbox-video');
+        if (video && !video.paused) {
+          video.pause();
+        }
         currentIndex++;
         updateLightbox();
       }
@@ -502,6 +744,11 @@
 
     function prevPhoto() {
       if (currentIndex > 0) {
+        // Pause video if playing
+        const video = document.getElementById('lightbox-video');
+        if (video && !video.paused) {
+          video.pause();
+        }
         currentIndex--;
         updateLightbox();
       }
@@ -550,21 +797,34 @@
     });
 
     // Touch/swipe support
-    document.getElementById('lightbox-image').addEventListener('touchstart', (e) => {
+    // Touch handlers for swipe gestures
+    const lightboxContent = document.querySelector('.lightbox-content');
+    
+    lightboxContent.addEventListener('touchstart', (e) => {
       touchStartX = e.changedTouches[0].screenX;
+      touchStartY = e.changedTouches[0].screenY;
     });
 
-    document.getElementById('lightbox-image').addEventListener('touchend', (e) => {
+    lightboxContent.addEventListener('touchend', (e) => {
       touchEndX = e.changedTouches[0].screenX;
+      touchEndY = e.changedTouches[0].screenY;
       handleSwipe();
     });
 
     function handleSwipe() {
       const swipeThreshold = 50;
-      const diff = touchStartX - touchEndX;
+      const diffX = touchStartX - touchEndX;
+      const diffY = touchStartY - touchEndY;
 
-      if (Math.abs(diff) > swipeThreshold) {
-        if (diff > 0) {
+      // Check for vertical swipe (down) - prioritize over horizontal
+      if (Math.abs(diffY) > swipeThreshold && Math.abs(diffY) > Math.abs(diffX)) {
+        if (diffY < 0) {
+          // Swipe down - close lightbox
+          closeLightbox();
+        }
+      } else if (Math.abs(diffX) > swipeThreshold) {
+        // Horizontal swipe
+        if (diffX > 0) {
           nextPhoto();
         } else {
           prevPhoto();

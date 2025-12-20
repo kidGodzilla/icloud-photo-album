@@ -278,12 +278,14 @@
       <ul class="feature-list">
         <li>Full-screen modal overlay with smooth animations</li>
         <li>Responsive grid view with hover effects</li>
-        <li>Full-screen lightbox for viewing individual photos</li>
+        <li>Full-screen lightbox for viewing individual photos and videos</li>
         <li>Keyboard navigation (arrow keys, ESC)</li>
-        <li>Touch/swipe support for mobile devices</li>
+        <li>Touch/swipe support (swipe down to dismiss)</li>
         <li>Dark mode support (follows system preferences)</li>
         <li>Isolated styles (won't conflict with your page)</li>
-        <li>Fast caching for improved performance</li>
+        <li>Smart caching with instant thumbnail preview</li>
+        <li>Privacy-focused: EXIF location data automatically stripped</li>
+        <li>Optimized images for fast loading</li>
       </ul>
     </section>
 
@@ -292,14 +294,14 @@
       
       <h3>As a Button</h3>
       <div class="code-block">
-<code>&lt;button onclick="icloudAlbumModal('B1v532ODWVjCzg')"&gt;
+<code>&lt;button onclick="icloudAlbumModal('e-a67c44f800be876eb34ccf9beeefc59009a9ea0839342bd0a5787a1ff377558c1202d6b0b847b81ea801cb23df320f5eUv0uFyNZ9VVnyOjVocAKz+VbVoD1ZWv+u1Ybn6V8ctk=')"&gt;
   View Photos
 &lt;/button&gt;</code>
       </div>
 
       <h3>As a Link</h3>
       <div class="code-block">
-<code>&lt;a href="#" onclick="icloudAlbumModal('B1v532ODWVjCzg'); return false;"&gt;
+<code>&lt;a href="#" onclick="icloudAlbumModal('e-a67c44f800be876eb34ccf9beeefc59009a9ea0839342bd0a5787a1ff377558c1202d6b0b847b81ea801cb23df320f5eUv0uFyNZ9VVnyOjVocAKz+VbVoD1ZWv+u1Ybn6V8ctk='); return false;"&gt;
   View Photos
 &lt;/a&gt;</code>
       </div>
@@ -308,7 +310,7 @@
       <div class="code-block">
 <code>&lt;script&gt;
   // Open modal programmatically
-  icloudAlbumModal('B1v532ODWVjCzg');
+  icloudAlbumModal('e-a67c44f800be876eb34ccf9beeefc59009a9ea0839342bd0a5787a1ff377558c1202d6b0b847b81ea801cb23df320f5eUv0uFyNZ9VVnyOjVocAKz+VbVoD1ZWv+u1Ybn6V8ctk=');
 &lt;/script&gt;</code>
       </div>
     </section>
@@ -320,9 +322,46 @@
       <p>Access albums directly via URL:</p>
       <div class="url-display" id="album-url"></div>
 
-      <h3>API Endpoint</h3>
-      <p>Fetch album data as JSON:</p>
+      <h3>Fetch Album Data</h3>
+      <p>Get album data as JSON (supports encrypted tokens with <code>e-</code> prefix):</p>
       <div class="url-display" id="api-url"></div>
+      
+      <h3>Encrypt Token</h3>
+      <p>Convert a public token to an encrypted private token:</p>
+      <div class="url-display" id="api-encrypt-url"></div>
+    </section>
+
+    <section class="section">
+      <h2>Token Encryption</h2>
+      <p>Convert a public album token to an encrypted private token for added security:</p>
+      
+      <div style="margin: 20px 0;">
+        <input 
+          type="text" 
+          id="token-input" 
+          placeholder="Enter album token (e.g. VbVoD1ZWv+u1Ybn6V8ctk)" 
+          style="width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; margin-bottom: 10px; box-sizing: border-box;"
+        >
+        <button 
+          class="demo-button" 
+          onclick="encryptToken()"
+          style="width: 100%;"
+        >
+          Encrypt Token
+        </button>
+      </div>
+      
+      <div id="encrypted-result" style="display: none; margin-top: 15px;">
+        <p><strong>Encrypted Token:</strong></p>
+        <div class="code-block" id="encrypted-token-display"></div>
+        <button 
+          class="demo-button" 
+          onclick="copyEncryptedToken()"
+          style="margin-top: 10px;"
+        >
+          Copy Encrypted Token
+        </button>
+      </div>
     </section>
 
     <section class="section">
@@ -330,6 +369,12 @@
       <p>The modal script creates a full-screen overlay with an iframe that loads your album viewer. The album viewer fetches photos from iCloud and displays them in a beautiful, responsive interface.</p>
       
       <p><strong>Album Token:</strong> To get an album token, share an iCloud photo album and extract the token from the share URL. The token is the unique identifier in the URL.</p>
+      
+      <p><strong>Encrypted Tokens:</strong> Encrypted tokens start with <code>e-</code> and hide the original album token. The backend automatically decrypts them when used. Use the token encryption tool above to convert public tokens to private ones.</p>
+      
+      <p><strong>Privacy & Security:</strong> All images are proxied through the server with EXIF location data automatically stripped. Original iCloud URLs are never exposed to clients. Images are optimized for web display (resized and compressed) for faster loading.</p>
+      
+      <p><strong>Video Support:</strong> The viewer supports both photos and videos from iCloud shared albums.</p>
     </section>
   </div>
 
@@ -337,7 +382,7 @@
     // Build URLs based on current hostname and protocol
     const baseUrl = window.location.origin;
     const scriptUrl = `${baseUrl}/icloud-photo-album-modal.js`;
-    const exampleToken = 'B1v532ODWVjCzg';
+    const exampleToken = 'e-a67c44f800be876eb34ccf9beeefc59009a9ea0839342bd0a5787a1ff377558c1202d6b0b847b81ea801cb23df320f5eUv0uFyNZ9VVnyOjVocAKz+VbVoD1ZWv+u1Ybn6V8ctk=';
 
     // Update script tag
     document.getElementById('script-tag').innerHTML = `<code>&lt;script src="${scriptUrl}"&gt;&lt;/script&gt;</code>`;
@@ -345,9 +390,11 @@
     // Update API URLs (make them clickable)
     const albumUrl = `${baseUrl}/${exampleToken}`;
     const apiUrl = `${baseUrl}/api/album/${exampleToken}`;
+    const encryptUrl = `${baseUrl}/api/encrypt-token`;
     
     document.getElementById('album-url').innerHTML = `<a href="${albumUrl}" target="_blank" rel="noopener noreferrer">${albumUrl}</a>`;
     document.getElementById('api-url').innerHTML = `<a href="${apiUrl}" target="_blank" rel="noopener noreferrer">${apiUrl}</a>`;
+    document.getElementById('api-encrypt-url').innerHTML = `<a href="${encryptUrl}" target="_blank" rel="noopener noreferrer">POST ${encryptUrl}</a>`;
 
     // Demo function
     function demoModal() {
@@ -361,6 +408,51 @@
           icloudAlbumModal(exampleToken);
         };
         document.head.appendChild(script);
+      }
+    }
+
+    // Encrypt token function
+    let encryptedTokenValue = '';
+    
+    async function encryptToken() {
+      const input = document.getElementById('token-input');
+      const token = input.value.trim();
+      
+      if (!token) {
+        alert('Please enter an album token');
+        return;
+      }
+
+      try {
+        const response = await fetch(`${baseUrl}/api/encrypt-token`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ token }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to encrypt token');
+        }
+
+        const data = await response.json();
+        encryptedTokenValue = data.encryptedToken;
+        
+        document.getElementById('encrypted-token-display').innerHTML = `<code>${data.encryptedToken}</code>`;
+        document.getElementById('encrypted-result').style.display = 'block';
+      } catch (error) {
+        alert('Error encrypting token: ' + error.message);
+      }
+    }
+
+    function copyEncryptedToken() {
+      if (encryptedTokenValue) {
+        navigator.clipboard.writeText(encryptedTokenValue).then(() => {
+          alert('Encrypted token copied to clipboard!');
+        }).catch(() => {
+          alert('Failed to copy token');
+        });
       }
     }
   </script>
