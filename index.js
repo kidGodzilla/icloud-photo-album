@@ -71,7 +71,7 @@ const CACHE_TTL = parseInt(process.env.CACHE_TTL || '3600000', 10); // Default: 
 const reloadingState = new Map(); // token -> boolean
 
 // Track recently accessed tokens for background refresh
-// Maps originalToken -> { lastAccessed: timestamp, decryptedToken: string }
+// Maps decryptedToken -> { lastAccessed: timestamp, decryptedToken: string }
 const recentlyAccessedTokens = new Map();
 const MAX_TRACKED_TOKENS = parseInt(process.env.MAX_TRACKED_TOKENS || '100', 10);
 const TOKEN_ACCESS_TTL = parseInt(process.env.TOKEN_ACCESS_TTL || '86400000', 10); // Default: 24 hours in milliseconds
@@ -601,8 +601,8 @@ app.get('/api/album/:token', async (req, res) => {
     // Capture decrypted token in const for async closures
     const finalDecryptedToken = decryptedToken;
 
-    // Use original token for cache key to avoid collisions
-    const cacheKey = originalToken;
+    // Use decrypted token as cache key so encrypted and unencrypted tokens share the same cache
+    const cacheKey = finalDecryptedToken;
 
     // Check cache first (stale-while-revalidate)
     const cached = await getCachedData(cacheKey);
@@ -627,9 +627,9 @@ app.get('/api/album/:token', async (req, res) => {
           (async () => {
             try {
               const freshData = await getImages(finalDecryptedToken);
-              const freshRewritten = await rewriteImageUrls(freshData, originalToken);
+              const freshRewritten = await rewriteImageUrls(freshData, finalDecryptedToken);
               await setCachedData(cacheKey, freshRewritten, false);
-              console.log(`Background reload complete for album: ${originalToken}`);
+              console.log(`Background reload complete for album: ${finalDecryptedToken}`);
             } catch (error) {
               console.error('Background reload failed:', error);
               setReloading(cacheKey, false);
@@ -640,7 +640,7 @@ app.get('/api/album/:token', async (req, res) => {
           cachedData.reloading = false;
           
           // Track this token for background refresh
-          trackTokenForRefresh(originalToken, finalDecryptedToken);
+          trackTokenForRefresh(finalDecryptedToken);
           
           return res.json(cachedData);
         }
@@ -649,15 +649,15 @@ app.get('/api/album/:token', async (req, res) => {
       // New cache format - rewrite URLs on read
       if (isStale && !reloadingState.get(cacheKey)) {
         // Stale cache - return immediately and reload in background
-        console.log(`Stale cache hit for album: ${originalToken}, serving stale data and reloading in background...`);
+        console.log(`Stale cache hit for album: ${finalDecryptedToken}, serving stale data and reloading in background...`);
         setReloading(cacheKey, true);
         
         // Return stale data immediately with reloading flag
-        const rewritten = await rewriteImageUrls(cachedData, originalToken);
+        const rewritten = await rewriteImageUrls(cachedData, finalDecryptedToken);
         rewritten.reloading = true;
         
         // Track this token for background refresh
-        trackTokenForRefresh(originalToken, finalDecryptedToken);
+        trackTokenForRefresh(finalDecryptedToken);
         
         res.json(rewritten);
         
@@ -666,9 +666,9 @@ app.get('/api/album/:token', async (req, res) => {
           try {
             console.log('Decrypted token:', finalDecryptedToken);
             const freshData = await getImages(finalDecryptedToken);
-            const freshRewritten = await rewriteImageUrls(freshData, originalToken);
+            const freshRewritten = await rewriteImageUrls(freshData, finalDecryptedToken);
             await setCachedData(cacheKey, freshRewritten, false);
-            console.log(`Background reload complete for album: ${originalToken}`);
+            console.log(`Background reload complete for album: ${finalDecryptedToken}`);
           } catch (error) {
             console.error('Background reload failed:', error);
             setReloading(cacheKey, false);
@@ -677,30 +677,30 @@ app.get('/api/album/:token', async (req, res) => {
         return;
       } else if (!isStale) {
         // Fresh cache
-        console.log(`Cache hit for album: ${originalToken}`);
-        const rewritten = await rewriteImageUrls(cachedData, originalToken);
+        console.log(`Cache hit for album: ${finalDecryptedToken}`);
+        const rewritten = await rewriteImageUrls(cachedData, finalDecryptedToken);
         rewritten.reloading = false;
         
         // Track this token for background refresh
-        trackTokenForRefresh(originalToken, finalDecryptedToken);
+        trackTokenForRefresh(finalDecryptedToken);
         
         return res.json(rewritten);
       }
     }
 
     // Cache miss - fetch from iCloud
-    console.log(`Cache miss for album: ${originalToken}, fetching from iCloud...`);
+    console.log(`Cache miss for album: ${finalDecryptedToken}, fetching from iCloud...`);
     const data = await getImages(finalDecryptedToken);
     
     // Store original data in cache (before rewriting URLs)
     await setCachedData(cacheKey, data, false);
     
     // Rewrite URLs to use proxy (strip EXIF) for response
-    const rewritten = await rewriteImageUrls(data, originalToken);
+    const rewritten = await rewriteImageUrls(data, finalDecryptedToken);
     rewritten.reloading = false;
     
     // Track this token for background refresh
-    trackTokenForRefresh(originalToken, finalDecryptedToken);
+    trackTokenForRefresh(finalDecryptedToken);
     
     res.json(rewritten);
   } catch (error) {
@@ -712,10 +712,10 @@ app.get('/api/album/:token', async (req, res) => {
   }
 });
 
-// Track token for background refresh
-function trackTokenForRefresh(originalToken, decryptedToken) {
-  // Update or add token to tracking map
-  recentlyAccessedTokens.set(originalToken, {
+// Track token for background refresh (uses decrypted token as key)
+function trackTokenForRefresh(decryptedToken) {
+  // Update or add token to tracking map (use decrypted token as key)
+  recentlyAccessedTokens.set(decryptedToken, {
     lastAccessed: Date.now(),
     decryptedToken: decryptedToken
   });
@@ -733,15 +733,15 @@ function trackTokenForRefresh(originalToken, decryptedToken) {
 }
 
 // Background refresh function for a single token
-async function refreshTokenInBackground(originalToken, decryptedToken) {
+async function refreshTokenInBackground(decryptedToken) {
   try {
     const freshData = await getImages(decryptedToken);
-    const freshRewritten = await rewriteImageUrls(freshData, originalToken);
-    await setCachedData(originalToken, freshRewritten, false);
-    console.log(`Background refresh complete for album: ${originalToken}`);
+    const freshRewritten = await rewriteImageUrls(freshData, decryptedToken);
+    await setCachedData(decryptedToken, freshRewritten, false);
+    console.log(`Background refresh complete for album: ${decryptedToken}`);
     return true;
   } catch (error) {
-    console.error(`Background refresh failed for album ${originalToken}:`, error.message);
+    console.error(`Background refresh failed for album ${decryptedToken}:`, error.message);
     return false;
   }
 }
@@ -753,13 +753,13 @@ schedule.scheduleJob('*/30 * * * *', async () => {
   const tokensToRefresh = [];
   
   // Collect tokens that should be refreshed (recently accessed and not too old)
-  for (const [originalToken, info] of recentlyAccessedTokens.entries()) {
+  for (const [decryptedToken, info] of recentlyAccessedTokens.entries()) {
     const age = now - info.lastAccessed;
     if (age < TOKEN_ACCESS_TTL) {
-      tokensToRefresh.push({ originalToken, decryptedToken: info.decryptedToken });
+      tokensToRefresh.push(decryptedToken);
     } else {
       // Remove old tokens
-      recentlyAccessedTokens.delete(originalToken);
+      recentlyAccessedTokens.delete(decryptedToken);
     }
   }
   
@@ -775,8 +775,8 @@ schedule.scheduleJob('*/30 * * * *', async () => {
   for (let i = 0; i < tokensToRefresh.length; i += BATCH_SIZE) {
     const batch = tokensToRefresh.slice(i, i + BATCH_SIZE);
     await Promise.all(
-      batch.map(({ originalToken, decryptedToken }) =>
-        refreshTokenInBackground(originalToken, decryptedToken)
+      batch.map(decryptedToken =>
+        refreshTokenInBackground(decryptedToken)
       )
     );
     
