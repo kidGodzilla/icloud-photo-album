@@ -850,9 +850,12 @@ app.get('/api/album/:token', async (req, res) => {
 
     // Use decrypted token as cache key so encrypted and unencrypted tokens share the same cache
     const cacheKey = finalDecryptedToken;
+    
+    // Check if refresh is requested (force fresh fetch)
+    const forceRefresh = req.query.refresh === 'true';
 
-    // Check cache first (stale-while-revalidate)
-    const cached = await getCachedData(cacheKey);
+    // Check cache first (stale-while-revalidate) - skip if force refresh
+    const cached = forceRefresh ? null : await getCachedData(cacheKey);
     if (cached) {
       const isStale = cached.isStale;
       const cachedData = cached.data;
@@ -1263,8 +1266,14 @@ async function extractAudioFromVideo(videoUrl, outputPath) {
   try {
     // Download video file
     console.log(`Downloading video from: ${videoUrl.substring(0, 80)}...`);
-    const response = await fetch(videoUrl);
+    const response = await fetch(videoUrl, {
+      signal: AbortSignal.timeout(60000) // 60 second timeout for download
+    });
     if (!response.ok) {
+      // If 401/403, the URL might be expired - throw a specific error
+      if (response.status === 401 || response.status === 403) {
+        throw new Error(`VIDEO_URL_EXPIRED: ${response.status} ${response.statusText}`);
+      }
       throw new Error(`Failed to download video: ${response.status} ${response.statusText}`);
     }
     
@@ -1510,6 +1519,19 @@ async function processVideoAugmentation(albumToken, photoGuid, videoUrl) {
         await fs.writeFile(cacheFile, JSON.stringify(skippedAugmentation, null, 2), 'utf-8');
         return skippedAugmentation;
       }
+      
+      // If video URL expired (401/403), don't cache as skipped - allow retry after album refresh
+      if (extractError.message && extractError.message.includes('VIDEO_URL_EXPIRED')) {
+        console.warn(`Video URL expired for ${photoGuid}, will retry after album refresh`);
+        throw new Error(`VIDEO_URL_EXPIRED: Video URL has expired. Please refresh the album cache.`);
+      }
+      
+      // If network/timeout error, don't cache as skipped - allow retry
+      if (extractError.cause && (extractError.cause.code === 'ETIMEDOUT' || extractError.message.includes('fetch failed') || extractError.message.includes('timeout'))) {
+        console.warn(`Network error for video ${photoGuid}: ${extractError.message}. Will retry later.`);
+        throw new Error(`NETWORK_ERROR: ${extractError.message}`);
+      }
+      
       throw extractError; // Re-throw other errors
     }
 
@@ -1638,6 +1660,22 @@ async function processVideoAugmentation(albumToken, photoGuid, videoUrl) {
 
   } catch (error) {
     console.error(`Error processing video augmentation for ${photoGuid}:`, error);
+    
+    // Don't cache errors for network issues or expired URLs - allow retry
+    if (error.message && (
+      error.message.includes('VIDEO_URL_EXPIRED') ||
+      error.message.includes('NETWORK_ERROR') ||
+      error.message.includes('ETIMEDOUT') ||
+      error.message.includes('fetch failed') ||
+      error.message.includes('timeout')
+    )) {
+      // Delete any existing cache file so it can be retried
+      if (existsSync(cacheFile)) {
+        await fs.unlink(cacheFile).catch(() => {});
+      }
+      console.log(`Video augmentation failed with transient error for ${photoGuid}, cache cleared for retry`);
+    }
+    
     throw error;
   }
 }
