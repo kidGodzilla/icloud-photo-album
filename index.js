@@ -73,11 +73,27 @@ let ffprobePath = null;
     } else {
       ffprobePath = ffprobeRaw;
     }
-    if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
-    if (ffprobePath) ffmpeg.setFfprobePath(ffprobePath);
-    console.log('FFmpeg paths configured', { ffmpeg: ffmpegPath, ffprobe: ffprobePath });
+    if (ffmpegPath) {
+      // Verify the ffmpeg binary exists and is executable
+      if (existsSync(ffmpegPath)) {
+        ffmpeg.setFfmpegPath(ffmpegPath);
+        console.log('FFmpeg path configured:', ffmpegPath);
+      } else {
+        console.warn(`FFmpeg binary not found at path: ${ffmpegPath}`);
+      }
+    }
+    if (ffprobePath) {
+      // Verify the ffprobe binary exists and is executable
+      if (existsSync(ffprobePath)) {
+        ffmpeg.setFfprobePath(ffprobePath);
+        console.log('FFprobe path configured:', ffprobePath);
+      } else {
+        console.warn(`FFprobe binary not found at path: ${ffprobePath}`);
+      }
+    }
   } catch(e) {
     console.warn('FFmpeg static binaries not found, using system ffmpeg:', e.message);
+    console.warn('If you see SIGSEGV errors, the system ffmpeg may be incompatible. Consider installing ffmpeg-static.');
   }
 })();
 
@@ -1101,7 +1117,16 @@ async function getVideoDuration(videoUrl) {
 // Extract audio from video using ffmpeg
 async function extractAudioFromVideo(videoUrl, outputPath) {
   return new Promise((resolve, reject) => {
-    ffmpeg(videoUrl)
+    // Validate video URL before processing
+    if (!videoUrl || typeof videoUrl !== 'string' || !videoUrl.startsWith('http')) {
+      reject(new Error(`Invalid video URL: ${videoUrl}`));
+      return;
+    }
+
+    let timeoutId;
+    const timeout = 300000; // 5 minute timeout
+    
+    const command = ffmpeg(videoUrl)
       .noVideo()
       .audioCodec('pcm_s16le')
       .audioFrequency(16000) // Whisper requires 16kHz
@@ -1109,16 +1134,36 @@ async function extractAudioFromVideo(videoUrl, outputPath) {
       .format('wav')
       .on('start', (cmd) => {
         console.log('Extracting audio with ffmpeg:', cmd);
+        // Set timeout
+        timeoutId = setTimeout(() => {
+          command.kill('SIGTERM');
+          reject(new Error('FFmpeg timeout after 5 minutes'));
+        }, timeout);
       })
       .on('error', (err) => {
+        if (timeoutId) clearTimeout(timeoutId);
         console.error('FFmpeg error:', err);
-        reject(err);
+        // Check if it's a SIGSEGV or other fatal error
+        if (err.message && (err.message.includes('SIGSEGV') || err.message.includes('killed'))) {
+          console.error(`FFmpeg crashed (SIGSEGV) for URL: ${videoUrl}`);
+          // Try to provide more helpful error
+          reject(new Error(`FFmpeg process crashed. This may indicate an incompatible binary, corrupted video, or unsupported format. URL: ${videoUrl.substring(0, 100)}...`));
+        } else {
+          reject(err);
+        }
       })
       .on('end', () => {
+        if (timeoutId) clearTimeout(timeoutId);
         console.log('Audio extraction complete');
         resolve(outputPath);
-      })
-      .save(outputPath);
+      });
+    
+    try {
+      command.save(outputPath);
+    } catch (error) {
+      if (timeoutId) clearTimeout(timeoutId);
+      reject(error);
+    }
   });
 }
 
@@ -1270,7 +1315,26 @@ async function processVideoAugmentation(albumToken, photoGuid, videoUrl) {
     const audioPath = path.join(TMP_DIR, audioFilename);
     
     console.log(`Extracting audio from video: ${photoGuid}`);
-    await extractAudioFromVideo(videoUrl, audioPath);
+    try {
+      await extractAudioFromVideo(videoUrl, audioPath);
+    } catch (extractError) {
+      // If extraction fails with SIGSEGV or similar, skip this video
+      if (extractError.message && extractError.message.includes('SIGSEGV')) {
+        console.error(`Skipping video ${photoGuid} due to ffmpeg crash (SIGSEGV). This may be a binary compatibility issue or corrupted video.`);
+        // Cache a skipped state
+        const skippedAugmentation = {
+          photoGuid,
+          albumToken,
+          skipped: true,
+          reason: 'ffmpeg_crash',
+          error: extractError.message,
+          processedAt: new Date().toISOString()
+        };
+        await fs.writeFile(cacheFile, JSON.stringify(skippedAugmentation, null, 2), 'utf-8');
+        return skippedAugmentation;
+      }
+      throw extractError; // Re-throw other errors
+    }
 
     // Step 2: Transcribe
     console.log(`Transcribing audio: ${photoGuid}`);
