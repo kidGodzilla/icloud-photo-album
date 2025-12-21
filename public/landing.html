@@ -260,6 +260,57 @@
       <p class="subtitle">Embed beautiful iCloud shared photo albums in your website</p>
     </header>
 
+    <section class="section" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; margin-bottom: 30px;">
+      <h2 style="color: white; margin-top: 0;">Convert iCloud URL</h2>
+      <p style="color: rgba(255,255,255,0.9);">Paste your iCloud shared album URL to generate a shareable link and embed code:</p>
+      
+      <div style="margin: 20px 0;">
+        <input 
+          type="text" 
+          id="icloud-url-input" 
+          placeholder="https://www.icloud.com/sharedalbum/#VbVoD1Zn6V8ctk" 
+          style="width: 100%; padding: 12px; border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; font-size: 14px; margin-bottom: 10px; box-sizing: border-box; background: rgba(255,255,255,0.95); color: #333;"
+        >
+        <button 
+          class="demo-button" 
+          onclick="convertUrl()"
+          style="width: 100%; background: white; color: #667eea;"
+        >
+          Generate Links
+        </button>
+      </div>
+      
+      <div id="url-conversion-result" style="display: none; margin-top: 20px;">
+        <div style="background: rgba(255,255,255,0.15); border-radius: 6px; padding: 20px; margin-bottom: 15px;">
+          <h3 style="color: white; margin-top: 0;">Shareable Viewer URL</h3>
+          <div class="code-block" style="background: rgba(255,255,255,0.2); border-color: rgba(255,255,255,0.3); margin: 10px 0;">
+            <code id="viewer-url-display" style="color: white; word-break: break-all;"></code>
+          </div>
+          <button 
+            class="demo-button" 
+            onclick="copyViewerUrl(this)"
+            style="width: 100%; background: white; color: #667eea; margin-top: 10px;"
+          >
+            Copy Viewer URL
+          </button>
+        </div>
+
+        <div style="background: rgba(255,255,255,0.15); border-radius: 6px; padding: 20px; margin-bottom: 15px;">
+          <h3 style="color: white; margin-top: 0;">Modal Embed Code</h3>
+          <div class="code-block" style="background: rgba(255,255,255,0.2); border-color: rgba(255,255,255,0.3); margin: 10px 0; max-height: 200px; overflow-y: auto;">
+            <code id="embed-code-display" style="color: white; white-space: pre-wrap; word-break: break-all;"></code>
+          </div>
+          <button 
+            class="demo-button" 
+            onclick="copyEmbedCode(this)"
+            style="width: 100%; background: white; color: #667eea; margin-top: 10px;"
+          >
+            Copy Embed Code
+          </button>
+        </div>
+      </div>
+    </section>
+
     <section class="section">
       <h2>Quick Start</h2>
       <p>Add this script to your HTML page:</p>
@@ -455,6 +506,106 @@
         });
       }
     }
+
+    // URL conversion functions
+    let currentViewerUrl = '';
+    let currentEmbedCode = '';
+    let currentToken = '';
+
+    function extractToken(url) {
+      if (!url) return null;
+      
+      // Try to extract token from various URL formats
+      // https://www.icloud.com/sharedalbum/#B1v532ODWVjCzg
+      const hashMatch = url.match(/#([^?&#]+)/);
+      if (hashMatch) {
+        return hashMatch[1];
+      }
+      
+      // Try query parameter
+      const queryMatch = url.match(/[?&]token=([^&#]+)/);
+      if (queryMatch) {
+        return queryMatch[1];
+      }
+      
+      // If it's just a token, return it
+      if (!url.includes('http') && !url.includes('/')) {
+        return url.trim();
+      }
+      
+      return null;
+    }
+
+    function convertUrl() {
+      const input = document.getElementById('icloud-url-input');
+      const url = input.value.trim();
+      
+      if (!url) {
+        alert('Please enter an iCloud shared album URL');
+        return;
+      }
+
+      const token = extractToken(url);
+      if (!token) {
+        alert('Could not extract album token from URL. Please make sure it\'s a valid iCloud shared album URL.');
+        return;
+      }
+
+      currentToken = token;
+      currentViewerUrl = `${baseUrl}/${token}`;
+      const scriptTag = '<script src="' + scriptUrl + '"><\/script>';
+      const buttonTag = '<button onclick="icloudAlbumModal(\'' + token + '\')">View Photos</button>';
+      currentEmbedCode = scriptTag + '\n' + buttonTag;
+
+      document.getElementById('viewer-url-display').textContent = currentViewerUrl;
+      document.getElementById('embed-code-display').textContent = currentEmbedCode;
+      document.getElementById('url-conversion-result').style.display = 'block';
+      
+      // Scroll to result
+      document.getElementById('url-conversion-result').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function copyViewerUrl(btn) {
+      if (!currentViewerUrl) return;
+      
+      const originalText = btn.textContent;
+      navigator.clipboard.writeText(currentViewerUrl).then(() => {
+        btn.textContent = 'Copied!';
+        setTimeout(() => {
+          btn.textContent = originalText;
+        }, 2000);
+      }).catch((err) => {
+        console.error('Failed to copy URL:', err);
+        alert('Failed to copy URL');
+      });
+    }
+
+    function copyEmbedCode(btn) {
+      if (!currentEmbedCode) return;
+      
+      const originalText = btn.textContent;
+      navigator.clipboard.writeText(currentEmbedCode).then(() => {
+        btn.textContent = 'Copied!';
+        setTimeout(() => {
+          btn.textContent = originalText;
+        }, 2000);
+      }).catch((err) => {
+        console.error('Failed to copy embed code:', err);
+        alert('Failed to copy embed code');
+      });
+    }
+
+    // Allow Enter key to trigger conversion
+    document.addEventListener('DOMContentLoaded', () => {
+      const urlInput = document.getElementById('icloud-url-input');
+      if (urlInput) {
+        urlInput.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') {
+            convertUrl();
+          }
+        });
+      }
+    });
   </script>
   <script src="icloud-photo-album-modal.js"></script>
 </body>
