@@ -434,34 +434,10 @@
         gap: 30px;
       }
 
-      /* Picture-in-picture mode for video on mobile */
-      .vlog-lightbox-video {
-        position: relative;
-        transition: all 0.3s ease;
-      }
-
-      .vlog-lightbox-video.pip-mode {
-        position: fixed;
-        bottom: 20px;
-        right: 20px;
-        width: 160px;
-        height: 90px;
-        z-index: 2002;
-        border-radius: 8px;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-      }
-
-      .vlog-lightbox-video.pip-mode video {
-        border-radius: 8px;
-      }
-
-      /* Add padding to text when video is in PIP mode */
-      .vlog-lightbox-text.pip-active {
-        padding-bottom: 120px; /* Space for PIP video + margin */
-      }
     }
 
     .vlog-lightbox-video {
+      position: relative;
       width: 100%;
       /* aspect-ratio set dynamically via JavaScript based on video dimensions */
       background: #000;
@@ -482,6 +458,35 @@
       width: 100%;
       height: 100%;
       object-fit: contain;
+    }
+
+    /* Captions styling */
+    .vlog-captions {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.75);
+      color: white;
+      padding: 8px 16px;
+      border-radius: 4px;
+      max-width: 90%;
+      text-align: center;
+      font-size: 16px;
+      line-height: 1.4;
+      pointer-events: none;
+      z-index: 10;
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      display: none !important;
+    }
+
+    @media (max-width: 968px) {
+      .vlog-captions {
+        font-size: 14px;
+        padding: 6px 12px;
+        bottom: 15px;
+      }
     }
 
     .vlog-lightbox-text {
@@ -645,7 +650,8 @@
     <button class="vlog-lightbox-close" id="vlog-lightbox-close" aria-label="Close">×</button>
     <div class="vlog-lightbox-content">
       <div class="vlog-lightbox-video">
-        <video id="vlog-lightbox-video" controls></video>
+        <video id="vlog-lightbox-video" controls playsinline></video>
+        <div id="vlog-captions" class="vlog-captions" style="display: none;"></div>
       </div>
       <div class="vlog-lightbox-text">
         <h2 id="vlog-lightbox-title" class="vlog-lightbox-title"></h2>
@@ -1157,6 +1163,45 @@
       lightboxImage.style.display = 'none';
       lightboxVideo.src = video.url;
       lightboxVideo.style.display = 'block';
+      
+      // Handle video errors (expired URLs, etc.)
+      const handleVideoError = async () => {
+        const videoError = lightboxVideo.error;
+        if (videoError && (videoError.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED || 
+            videoError.code === MediaError.MEDIA_ERR_NETWORK || 
+            videoError.code === MediaError.MEDIA_ERR_DECODE)) {
+          console.warn(`Video playback error for ${item.photoGuid}, attempting to refresh album...`);
+          
+          // Try to refresh the album to get new URLs
+          try {
+            const refreshResponse = await fetch(`/api/album/${token}?refresh=true`);
+            if (refreshResponse.ok) {
+              const refreshedData = await refreshResponse.json();
+              // Find the updated video URL
+              const updatedItem = refreshedData.photos?.find(p => p.photoGuid === item.photoGuid);
+              if (updatedItem) {
+                const updatedVideo = getBestVideo(updatedItem);
+                if (updatedVideo && updatedVideo.url && updatedVideo.url !== video.url) {
+                  console.log(`Retrying with refreshed video URL for ${item.photoGuid}`);
+                  // Update the item in our local array
+                  Object.assign(item, updatedItem);
+                  lightboxVideo.src = updatedVideo.url;
+                  lightboxVideo.load();
+                  return;
+                }
+              }
+            }
+          } catch (refreshError) {
+            console.error('Failed to refresh album:', refreshError);
+          }
+          
+          // If refresh didn't work, show error message
+          console.error(`Video failed to load for ${item.photoGuid}:`, videoError);
+          lightboxInfo.innerHTML = `<div style="color: #ff6b6b;">Video failed to load. The URL may have expired.</div>`;
+        }
+      };
+      
+      lightboxVideo.addEventListener('error', handleVideoError, { once: true });
 
       const caption = item.caption || '';
       const date = formatDate(item.dateCreated);
@@ -1253,6 +1298,114 @@
       }
     }
 
+    // Setup video captions from transcription and timestamps
+    function setupVideoCaptions(videoElement, augmentation) {
+      const captionsDiv = document.getElementById('vlog-captions');
+      
+      // Remove existing track elements
+      const existingTracks = videoElement.querySelectorAll('track');
+      existingTracks.forEach(track => track.remove());
+      
+      // Clear captions div
+      if (captionsDiv) {
+        captionsDiv.textContent = '';
+        captionsDiv.style.display = 'none';
+      }
+      
+      if (!augmentation || !augmentation.transcription || !augmentation.timestamps || !augmentation.points) {
+        return; // No caption data available
+      }
+      
+      const { transcription, timestamps, points } = augmentation;
+      
+      // Create WebVTT format subtitles
+      let vttContent = 'WEBVTT\n\n';
+      
+      // Group words by timestamps to create caption cues
+      for (let i = 0; i < timestamps.length; i++) {
+        const startTime = timestamps[i];
+        const endTime = i < timestamps.length - 1 ? timestamps[i + 1] : startTime + 2000; // Default 2s if last
+        
+        // Get text for this segment
+        const startPoint = points[i] || 0;
+        const endPoint = i < points.length - 1 ? points[i + 1] : transcription.length;
+        const captionText = transcription.substring(startPoint, endPoint).trim();
+        
+        if (!captionText) continue;
+        
+        // Format times as WebVTT (HH:MM:SS.mmm)
+        const formatTime = (ms) => {
+          const hours = Math.floor(ms / 3600000);
+          const minutes = Math.floor((ms % 3600000) / 60000);
+          const seconds = Math.floor((ms % 60000) / 1000);
+          const milliseconds = ms % 1000;
+          return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(3, '0')}`;
+        };
+        
+        vttContent += `${i + 1}\n`;
+        vttContent += `${formatTime(startTime)} --> ${formatTime(endTime)}\n`;
+        vttContent += `${captionText}\n\n`;
+      }
+      
+      // Create blob URL for WebVTT
+      const blob = new Blob([vttContent], { type: 'text/vtt' });
+      const vttUrl = URL.createObjectURL(blob);
+      
+      // Add track element to video
+      const track = document.createElement('track');
+      track.kind = 'captions';
+      track.label = 'English';
+      track.srclang = 'en';
+      track.src = vttUrl;
+      track.default = true;
+      videoElement.appendChild(track);
+      
+      // Enable text tracks
+      if (videoElement.textTracks.length > 0) {
+        videoElement.textTracks[0].mode = 'showing';
+      }
+      
+      // Also create a custom caption overlay for better styling control
+      if (captionsDiv) {
+        const updateCaptions = () => {
+          const currentTime = videoElement.currentTime * 1000; // Convert to ms
+          
+          // Find the current caption segment
+          let currentCaption = '';
+          for (let i = 0; i < timestamps.length; i++) {
+            const startTime = timestamps[i];
+            const endTime = i < timestamps.length - 1 ? timestamps[i + 1] : startTime + 2000;
+            
+            if (currentTime >= startTime && currentTime < endTime) {
+              const startPoint = points[i] || 0;
+              const endPoint = i < points.length - 1 ? points[i + 1] : transcription.length;
+              currentCaption = transcription.substring(startPoint, endPoint).trim();
+              break;
+            }
+          }
+          
+          if (currentCaption) {
+            captionsDiv.textContent = currentCaption;
+            captionsDiv.style.display = 'block';
+          } else {
+            captionsDiv.style.display = 'none';
+          }
+        };
+        
+        videoElement.addEventListener('timeupdate', updateCaptions);
+        
+        // Hide captions when video ends
+        videoElement.addEventListener('ended', () => {
+          if (captionsDiv) captionsDiv.style.display = 'none';
+        });
+        
+        // Clean up blob URL when video is removed
+        videoElement.addEventListener('loadstart', () => {
+          URL.revokeObjectURL(vttUrl);
+        });
+      }
+    }
+
     async function openVlogLightbox(itemIndex) {
       const item = items[itemIndex];
       if (!item || !isVideo(item)) return;
@@ -1267,10 +1420,53 @@
       const vlogPost = document.getElementById('vlog-lightbox-post');
 
       const vlogContent = await generateVlogContent(item, token);
-
+      
+      // Get augmentation data for captions
+      const augmentation = await fetchVideoAugmentation(token, item.photoGuid);
+      
       vlogVideo.src = video.url;
       vlogTitle.textContent = vlogContent.title;
       vlogDate.textContent = formatDate(item.dateCreated);
+      
+      // Handle video errors (expired URLs, etc.)
+      const handleVlogVideoError = async () => {
+        const videoError = vlogVideo.error;
+        if (videoError && (videoError.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED || 
+            videoError.code === MediaError.MEDIA_ERR_NETWORK || 
+            videoError.code === MediaError.MEDIA_ERR_DECODE)) {
+          console.warn(`Video playback error for ${item.photoGuid}, attempting to refresh album...`);
+          
+          // Try to refresh the album to get new URLs
+          try {
+            const refreshResponse = await fetch(`/api/album/${token}?refresh=true`);
+            if (refreshResponse.ok) {
+              const refreshedData = await refreshResponse.json();
+              // Find the updated video URL
+              const updatedItem = refreshedData.photos?.find(p => p.photoGuid === item.photoGuid);
+              if (updatedItem) {
+                const updatedVideo = getBestVideo(updatedItem);
+                if (updatedVideo && updatedVideo.url && updatedVideo.url !== video.url) {
+                  console.log(`Retrying with refreshed video URL for ${item.photoGuid}`);
+                  // Update the item in our local array
+                  Object.assign(item, updatedItem);
+                  vlogVideo.src = updatedVideo.url;
+                  vlogVideo.load();
+                  return;
+                }
+              }
+            }
+          } catch (refreshError) {
+            console.error('Failed to refresh album:', refreshError);
+          }
+          
+          // If refresh didn't work, show error message
+          console.error(`Video failed to load for ${item.photoGuid}:`, videoError);
+        }
+      };
+      vlogVideo.addEventListener('error', handleVlogVideoError, { once: true });
+      
+      // Setup captions if we have transcription and timestamps
+      setupVideoCaptions(vlogVideo, augmentation);
       
       // Set aspect ratio based on video dimensions from metadata
       const vlogVideoContainer = document.querySelector('.vlog-lightbox-video');
@@ -1316,81 +1512,6 @@
       vlogLightbox.classList.add('active');
       document.body.classList.add('lightbox-open');
       vlogVideo.play();
-
-      // Setup picture-in-picture scroll detection for mobile
-      setupVlogPIP();
-    }
-
-    // Setup picture-in-picture for vlog lightbox on mobile
-    function setupVlogPIP() {
-      const vlogLightbox = document.getElementById('vlog-lightbox');
-      const vlogVideoContainer = document.querySelector('.vlog-lightbox-video');
-      const vlogText = document.querySelector('.vlog-lightbox-text');
-      
-      if (!vlogLightbox || !vlogVideoContainer || !vlogText) return;
-
-      // Only enable on mobile devices
-      const isMobile = window.innerWidth <= 968;
-      if (!isMobile) return;
-
-      // Handle scroll - check if video is scrolled out of view
-      const handleScroll = () => {
-        if (!vlogLightbox.classList.contains('active')) return;
-
-        // Check if video is scrolled out of view (top of video is above viewport)
-        const rect = vlogVideoContainer.getBoundingClientRect();
-        const isVideoOutOfView = rect.bottom < 50; // 50px threshold
-
-        // If video is scrolled out of view, enable PIP mode
-        if (isVideoOutOfView) {
-          vlogVideoContainer.classList.add('pip-mode');
-          vlogText.classList.add('pip-active');
-        } else {
-          vlogVideoContainer.classList.remove('pip-mode');
-          vlogText.classList.remove('pip-active');
-        }
-      };
-
-      // Listen to scroll on the lightbox container (which is scrollable)
-      vlogLightbox.addEventListener('scroll', handleScroll);
-      
-      // Also use IntersectionObserver for better performance
-      const observer = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-          if (!vlogLightbox.classList.contains('active')) return;
-          
-          // If video is not intersecting (scrolled out of view), enable PIP
-          if (!entry.isIntersecting) {
-            vlogVideoContainer.classList.add('pip-mode');
-            vlogText.classList.add('pip-active');
-          } else {
-            vlogVideoContainer.classList.remove('pip-mode');
-            vlogText.classList.remove('pip-active');
-          }
-        });
-      }, {
-        root: vlogLightbox,
-        threshold: 0,
-        rootMargin: '-50px 0px 0px 0px' // Trigger when video is 50px from top
-      });
-
-      // Observe the video container
-      observer.observe(vlogVideoContainer);
-
-      // Clean up when lightbox closes
-      const closeObserver = new MutationObserver((mutations) => {
-        mutations.forEach((mutation) => {
-          if (!vlogLightbox.classList.contains('active')) {
-            vlogVideoContainer.classList.remove('pip-mode');
-            vlogText.classList.remove('pip-active');
-            vlogLightbox.removeEventListener('scroll', handleScroll);
-            observer.disconnect();
-            closeObserver.disconnect();
-          }
-        });
-      });
-
-      closeObserver.observe(vlogLightbox, { attributes: true, attributeFilter: ['class'] });
     }
 
     // Lightbox controls
@@ -1441,10 +1562,6 @@
       
       vlogLightbox.classList.remove('active');
       document.body.classList.remove('lightbox-open');
-      
-      // Reset PIP mode
-      if (vlogVideoContainer) vlogVideoContainer.classList.remove('pip-mode');
-      if (vlogText) vlogText.classList.remove('pip-active');
       
       vlogVideo.pause();
       vlogVideo.src = '';
