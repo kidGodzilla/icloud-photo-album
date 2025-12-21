@@ -322,6 +322,24 @@
       max-height: 90vh;
       object-fit: contain;
       user-select: none;
+      position: relative;
+      z-index: 2;
+    }
+
+    .lightbox-thumbnail {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      z-index: 1;
+      transition: opacity 0.3s ease;
+    }
+
+    .lightbox-image.loaded + .lightbox-thumbnail {
+      opacity: 0;
+      pointer-events: none;
     }
 
     .lightbox-close {
@@ -701,6 +719,7 @@
     <button class="lightbox-nav prev" id="lightbox-prev" aria-label="Previous">‹</button>
     <div class="lightbox-content">
       <img id="lightbox-image" class="lightbox-image" alt="" style="display: none;">
+      <img id="lightbox-thumbnail" class="lightbox-thumbnail" alt="" style="display: none;">
       <video id="lightbox-video" class="lightbox-video" controls style="display: none;"></video>
       <div class="lightbox-info" id="lightbox-info"></div>
     </div>
@@ -1255,6 +1274,7 @@
           img.src = thumbnail.url;
           img.alt = '';
           img.loading = 'lazy';
+          img.dataset.itemIndex = index; // Store index for quick lookup
           photoItem.appendChild(img);
 
           photoItem.addEventListener('click', () => openPhotoLightbox(index));
@@ -1362,13 +1382,44 @@
 
       const lightbox = document.getElementById('lightbox');
       const lightboxImage = document.getElementById('lightbox-image');
+      const lightboxThumbnail = document.getElementById('lightbox-thumbnail');
       const lightboxVideo = document.getElementById('lightbox-video');
       const lightboxInfo = document.getElementById('lightbox-info');
 
-      // Hide video, show image
+      // Hide video, reset image state
       lightboxVideo.style.display = 'none';
+      lightboxImage.style.display = 'none';
+      lightboxImage.classList.remove('loaded');
+
+      // Show thumbnail immediately - reuse already-loaded grid image
+      const gridImg = document.querySelector(`.photo-item img[data-item-index="${itemIndex}"]`);
+      if (gridImg && gridImg.complete && gridImg.naturalWidth > 0) {
+        // Use the EXACT same src from the grid image (already loaded and cached)
+        lightboxThumbnail.src = gridImg.src;
+        lightboxThumbnail.style.display = 'block';
+        lightboxThumbnail.style.opacity = '1';
+        lightboxThumbnail.style.filter = 'none';
+      } else {
+        // Fallback: if grid image not found, get thumbnail
+        const thumbnail = getBestThumbnail(item);
+        if (thumbnail && thumbnail.url !== bestImage.url) {
+          lightboxThumbnail.src = thumbnail.url;
+          lightboxThumbnail.style.display = 'block';
+          lightboxThumbnail.style.opacity = '0.5';
+          lightboxThumbnail.style.filter = 'blur(10px)';
+        } else {
+          lightboxThumbnail.style.display = 'none';
+        }
+      }
+
+      // Load full image
+      lightboxImage.onload = function() {
+        lightboxImage.classList.add('loaded');
+        lightboxImage.style.display = 'block';
+        // Hide thumbnail when full image loads
+        lightboxThumbnail.style.display = 'none';
+      };
       lightboxImage.src = bestImage.url;
-      lightboxImage.style.display = 'block';
 
       const caption = item.caption || '';
       const date = formatDate(item.dateCreated);
