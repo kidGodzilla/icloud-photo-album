@@ -1400,9 +1400,15 @@ async function transcribeAudio(audioPath) {
 }
 
 // Blogify transcription using OpenAI GPT-4o
-async function blogifyTranscription(transcription) {
+async function blogifyTranscription(transcription, meaningfulWordCount = null) {
   if (!openai) {
     throw new Error('OpenAI API key not configured');
+  }
+
+  // Build quality warning if content seems limited
+  let qualityWarning = '';
+  if (meaningfulWordCount !== null && meaningfulWordCount < 50) {
+    qualityWarning = `\n\nIMPORTANT: This transcription appears to have limited content (approximately ${meaningfulWordCount} meaningful words). If the transcript is mostly music markers, sound effects, or very brief/nonsubstantial content, respond with ONLY the text: "[INSUFFICIENT_CONTENT]" without any markdown formatting or additional commentary. Do NOT create a blog post from minimal or repetitive content. Only proceed if there is actual substantial dialogue or narration to work with.`;
   }
 
   const prompt = `I have an audio blog post transcript. Format it as a Markdown blog post with headlines and rich formatting. Use the provided similarity percentage as a guide for how closely to stick to the original text.
@@ -1413,7 +1419,11 @@ Assume medium quality transcription, you're allowed to correct obvious errors. I
 - At 90% similarity, retain most of the original phrasing and structure, making only moderate adjustments for flow and readability.
 - At 95% similarity, keep very close to the original text, making only minor edits to fix glaring issues while focusing primarily on formatting.
 
-Respond only the final markdown. No ticks surrounding it or any commentary about the task. This will be fed straight into a markdown parser and will throw an error if you deviate from this instruction.
+CRITICAL: If the transcript contains mostly music markers (like "(upbeat music)"), sound effects, or is too brief/nonsubstantial to create a meaningful blog post, respond with EXACTLY: [INSUFFICIENT_CONTENT]
+
+Only create a blog post if there is actual substantial dialogue, narration, or meaningful content. Do NOT fabricate content or expand on minimal transcriptions.${qualityWarning}
+
+Respond only the final markdown (or [INSUFFICIENT_CONTENT] if content is insufficient). No ticks surrounding it or any commentary about the task. This will be fed straight into a markdown parser and will throw an error if you deviate from this instruction.
 
 Please use the following similarity value for this request: 89.`;
 
@@ -1431,6 +1441,11 @@ Please use the following similarity value for this request: 89.`;
     
     // Strip markdown code fences if present (sometimes LLM wraps response despite instructions)
     blogContent = blogContent.replace(/^```markdown\n?/i, '').replace(/^```\n?/m, '').replace(/\n?```$/m, '').trim();
+    
+    // Check if LLM detected insufficient content
+    if (blogContent === '[INSUFFICIENT_CONTENT]' || blogContent.toUpperCase().includes('INSUFFICIENT_CONTENT')) {
+      throw new Error('INSUFFICIENT_CONTENT');
+    }
     
     return blogContent;
   } catch (error) {
@@ -1520,9 +1535,83 @@ async function processVideoAugmentation(albumToken, photoGuid, videoUrl) {
       return skippedAugmentation;
     }
 
+    // Check for low-quality transcriptions (mostly music markers or repetitive patterns)
+    const normalizedTranscript = transcription.toLowerCase().trim();
+    const musicMarkerPatterns = [
+      /\(.*music.*\)/gi,
+      /\(.*sound.*\)/gi,
+      /\(.*noise.*\)/gi,
+      /\(.*ambient.*\)/gi
+    ];
+    
+    // Count music markers
+    let musicMarkerCount = 0;
+    for (const pattern of musicMarkerPatterns) {
+      const matches = normalizedTranscript.match(pattern);
+      if (matches) musicMarkerCount += matches.length;
+    }
+    
+    // Remove music markers to check actual content
+    let contentWithoutMarkers = normalizedTranscript;
+    for (const pattern of musicMarkerPatterns) {
+      contentWithoutMarkers = contentWithoutMarkers.replace(pattern, ' ').trim();
+    }
+    
+    // Remove punctuation and extra whitespace to count meaningful words
+    const meaningfulWords = contentWithoutMarkers
+      .replace(/[^\w\s]/g, ' ')
+      .split(/\s+/)
+      .filter(word => word.length > 2); // Only words longer than 2 chars
+    
+    // Check if transcription is mostly music markers or has very few meaningful words
+    const markerPercentage = (musicMarkerCount * 20) / transcription.length; // Rough estimate
+    const meaningfulWordCount = meaningfulWords.length;
+    
+    if (markerPercentage > 0.5 || meaningfulWordCount < 20) {
+      console.log(`Skipping video ${photoGuid}: low-quality transcription (${meaningfulWordCount} meaningful words, ${musicMarkerCount} music markers)`);
+      // Clean up
+      await fs.unlink(audioPath).catch(() => {});
+      // Cache the skipped state
+      const skippedAugmentation = {
+        photoGuid,
+        albumToken,
+        skipped: true,
+        reason: 'low_quality_transcription',
+        transcriptionLength: transcription.length,
+        meaningfulWordCount,
+        musicMarkerCount,
+        processedAt: new Date().toISOString()
+      };
+      await fs.writeFile(cacheFile, JSON.stringify(skippedAugmentation, null, 2), 'utf-8');
+      return skippedAugmentation;
+    }
+
     // Step 3: Blogify
     console.log(`Blogifying transcription: ${photoGuid}`);
-    const blog = await blogifyTranscription(transcription);
+    let blog;
+    try {
+      blog = await blogifyTranscription(transcription, meaningfulWordCount);
+    } catch (blogifyError) {
+      // If LLM detected insufficient content, skip this video
+      if (blogifyError.message === 'INSUFFICIENT_CONTENT') {
+        console.log(`Skipping video ${photoGuid}: LLM detected insufficient content`);
+        // Clean up
+        await fs.unlink(audioPath).catch(() => {});
+        // Cache the skipped state
+        const skippedAugmentation = {
+          photoGuid,
+          albumToken,
+          skipped: true,
+          reason: 'insufficient_content',
+          transcriptionLength: transcription.length,
+          meaningfulWordCount,
+          processedAt: new Date().toISOString()
+        };
+        await fs.writeFile(cacheFile, JSON.stringify(skippedAugmentation, null, 2), 'utf-8');
+        return skippedAugmentation;
+      }
+      throw blogifyError; // Re-throw other errors
+    }
 
     // Create augmentation object
     const augmentation = {
