@@ -1879,24 +1879,54 @@
     // Service Worker registration and badge management
     // Only register on feed pages (not landing page)
     if ('serviceWorker' in navigator && token) {
-      // Request notification permission for iOS badges
-      if ('Notification' in window && 'requestPermission' in Notification) {
-        Notification.requestPermission().then((result) => {
-          console.log('Notification permission:', result);
-          if (result === 'granted') {
-            console.log('Notification permission granted - badges will work on iOS');
-          } else {
-            console.log('Notification permission not granted - badges may not work on iOS');
-          }
-        }).catch((error) => {
-          console.error('Error requesting notification permission:', error);
-        });
-      }
-      
       navigator.serviceWorker.register('/sw.js', {
         scope: window.location.pathname // Scope to current feed path
       }).then((registration) => {
         console.log('Service Worker registered:', registration);
+        
+        // Wait for service worker to be ready, then request notification permission
+        // iOS requires notification permission for badges to work
+        if (registration.active || registration.installing || registration.waiting) {
+          const checkPermission = () => {
+            if ('Notification' in window) {
+              if ('permission' in Notification) {
+                const currentPermission = Notification.permission;
+                console.log('Current notification permission:', currentPermission);
+                
+                if (currentPermission === 'default') {
+                  // Permission hasn't been requested yet - request it
+                  // On iOS, this might only work in standalone mode or after user interaction
+                  Notification.requestPermission().then((result) => {
+                    console.log('Notification permission result:', result);
+                    if (result === 'granted') {
+                      console.log('Notification permission granted - badges will work on iOS');
+                    } else if (result === 'denied') {
+                      console.log('Notification permission denied - badges will not work on iOS');
+                      console.log('Note: On iOS, you may need to enable notifications in Settings > Safari > [Site] > Notifications');
+                    }
+                  }).catch((error) => {
+                    console.error('Error requesting notification permission:', error);
+                  });
+                } else if (currentPermission === 'granted') {
+                  console.log('Notification permission already granted - badges will work on iOS');
+                } else {
+                  console.log('Notification permission denied - badges will not work on iOS');
+                  console.log('Note: On iOS, enable notifications in Settings > Safari > [Site] > Notifications');
+                }
+              } else if ('requestPermission' in Notification) {
+                // Fallback for older API
+                Notification.requestPermission().then((result) => {
+                  console.log('Notification permission result:', result);
+                }).catch((error) => {
+                  console.error('Error requesting notification permission:', error);
+                });
+              }
+            }
+          };
+          
+          // Check permission after a short delay to ensure service worker is ready
+          setTimeout(checkPermission, 500);
+        }
         
         // Update tracked tokens when feed loads
         updateTrackedTokens([token]);
