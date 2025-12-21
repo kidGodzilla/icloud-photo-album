@@ -178,16 +178,24 @@ async function setLastPhotoCount(token, count) {
 // Check for new photos and update badge
 async function checkForNewPhotos() {
   try {
-    // Check if Badge API is supported
-    if (!('setAppBadge' in self.registration)) {
-      console.log('Badge API not supported');
+    // Check if Badge API is supported - try both service worker and navigator APIs
+    let badgeAPI = null;
+    if ('setAppBadge' in self.registration) {
+      badgeAPI = self.registration;
+    } else if ('setAppBadge' in navigator) {
+      badgeAPI = navigator;
+    } else {
+      console.log('[SW] Badge API not supported');
       return;
     }
 
+    console.log('[SW] Checking for new photos...');
     const tokens = await getStoredTokens();
+    console.log(`[SW] Found ${tokens.length} tracked token(s)`);
     
     if (tokens.length === 0) {
-      await self.registration.setAppBadge(0);
+      console.log('[SW] No tokens tracked, clearing badge');
+      await badgeAPI.setAppBadge(0);
       return;
     }
 
@@ -196,7 +204,10 @@ async function checkForNewPhotos() {
     for (const token of tokens) {
       try {
         // Use a lightweight endpoint that just returns photo count
-        const response = await fetch(`/api/badge-check/${token}`, {
+        const url = new URL(`/api/badge-check/${token}`, self.location.origin);
+        console.log(`[SW] Checking token: ${token.substring(0, 20)}...`);
+        
+        const response = await fetch(url.toString(), {
           cache: 'no-cache',
           headers: {
             'Accept': 'application/json'
@@ -208,28 +219,47 @@ async function checkForNewPhotos() {
           const currentCount = data.photoCount || 0;
           const lastCount = await getLastPhotoCount(token);
           
+          console.log(`[SW] Token ${token.substring(0, 20)}... - Current: ${currentCount}, Last: ${lastCount}`);
+          
           if (currentCount > lastCount) {
             const newPhotos = currentCount - lastCount;
             totalNewPhotos += newPhotos;
+            console.log(`[SW] Found ${newPhotos} new photo(s) for token ${token.substring(0, 20)}...`);
             await setLastPhotoCount(token, currentCount);
           } else if (currentCount !== lastCount) {
             // Album was updated (count changed), reset count
+            console.log(`[SW] Count changed (decreased), resetting for token ${token.substring(0, 20)}...`);
             await setLastPhotoCount(token, currentCount);
+          } else {
+            console.log(`[SW] No new photos for token ${token.substring(0, 20)}...`);
           }
+        } else {
+          console.error(`[SW] Bad response for token ${token.substring(0, 20)}...: ${response.status}`);
         }
       } catch (error) {
-        console.error(`Error checking album ${token}:`, error);
+        console.error(`[SW] Error checking album ${token.substring(0, 20)}...:`, error);
       }
     }
 
     // Update badge
+    console.log(`[SW] Total new photos: ${totalNewPhotos}`);
     if (totalNewPhotos > 0) {
-      await self.registration.setAppBadge(totalNewPhotos);
+      try {
+        await badgeAPI.setAppBadge(totalNewPhotos);
+        console.log(`[SW] Badge set to ${totalNewPhotos}`);
+      } catch (badgeError) {
+        console.error('[SW] Error setting badge:', badgeError);
+      }
     } else {
-      await self.registration.setAppBadge(0);
+      try {
+        await badgeAPI.setAppBadge(0);
+        console.log('[SW] Badge cleared');
+      } catch (badgeError) {
+        console.error('[SW] Error clearing badge:', badgeError);
+      }
     }
   } catch (error) {
-    console.error('Error checking for new photos:', error);
+    console.error('[SW] Error checking for new photos:', error);
   }
 }
 
@@ -258,8 +288,11 @@ self.addEventListener('message', async (event) => {
         event.ports[0].postMessage({ success: true });
       }
       
-      // Trigger immediate check
-      await checkForNewPhotos();
+      // Trigger immediate check after storing tokens
+      console.log(`[SW] Stored ${tokens.length} token(s), triggering check...`);
+      setTimeout(() => {
+        checkForNewPhotos();
+      }, 1000);
     } catch (error) {
       console.error('Error updating tracked tokens:', error);
       if (event.ports && event.ports[0]) {
@@ -272,8 +305,20 @@ self.addEventListener('message', async (event) => {
       event.ports[0].postMessage({ success: true });
     }
   } else if (message.type === 'CLEAR_BADGE') {
+    let badgeAPI = null;
     if ('setAppBadge' in self.registration) {
-      await self.registration.setAppBadge(0);
+      badgeAPI = self.registration;
+    } else if ('setAppBadge' in navigator) {
+      badgeAPI = navigator;
+    }
+    
+    if (badgeAPI) {
+      try {
+        await badgeAPI.setAppBadge(0);
+        console.log('[SW] Badge cleared via CLEAR_BADGE message');
+      } catch (error) {
+        console.error('[SW] Error clearing badge:', error);
+      }
     }
     if (event.ports && event.ports[0]) {
       event.ports[0].postMessage({ success: true });
