@@ -401,8 +401,17 @@ app.use((req, res, next) => {
     // Cache headers will be set in the route handler
     return next();
   }
+  // For JS/CSS files, use shorter cache with revalidation for iOS
+  if (req.path.match(/\.(js|css)$/i)) {
+    res.set('Cache-Control', 'public, max-age=3600, must-revalidate');
+    res.set('Vary', 'Accept-Encoding');
+    // Add version query param if present for cache busting
+    if (req.query.v) {
+      res.set('ETag', `"${req.query.v}"`);
+    }
+  }
   // For other static files, add cache headers
-  if (req.path.match(/\.(jpg|jpeg|png|gif|webp|svg|ico|css|js|woff|woff2|ttf|eot)$/i)) {
+  else if (req.path.match(/\.(jpg|jpeg|png|gif|webp|svg|ico|woff|woff2|ttf|eot)$/i)) {
     res.set('Cache-Control', 'public, max-age=31536000, immutable');
   }
   next();
@@ -1397,14 +1406,19 @@ app.get('/', (req, res) => {
 // Serve static files from public directory (before dynamic routes)
 // Configure static middleware to set proper cache headers
 app.use(express.static(path.join(__dirname, 'public'), {
-  setHeaders: (res, path) => {
+  setHeaders: (res, filePath) => {
     // Don't cache HTML files (they should always be fresh)
-    if (path.endsWith('.html')) {
-      res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    if (filePath.endsWith('.html')) {
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
       res.set('Pragma', 'no-cache');
       res.set('Expires', '0');
+      res.set('ETag', `"${Date.now()}"`); // Always unique ETag for HTML
+    } else if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
+      // Cache JS/CSS with shorter TTL and revalidation for iOS
+      res.set('Cache-Control', 'public, max-age=3600, must-revalidate');
+      res.set('Vary', 'Accept-Encoding');
     } else {
-      // Cache other static assets (JS, CSS, etc.) aggressively
+      // Cache other static assets (images, etc.) aggressively
       res.set('Cache-Control', 'public, max-age=31536000, immutable');
     }
   }
@@ -2259,14 +2273,25 @@ app.get('/feed/:token', async (req, res, next) => {
         console.log(`Feed route: WARNING - apple-mobile-web-app-title meta tag not found in HTML`);
       }
       
+      // Add aggressive no-cache headers for HTML to prevent iOS caching
       res.set('Content-Type', 'text/html');
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+      res.set('Pragma', 'no-cache');
+      res.set('Expires', '0');
+      res.set('ETag', `"${Date.now()}-${token.substring(0, 10)}"`); // Unique ETag
       res.send(html);
     } else {
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+      res.set('Pragma', 'no-cache');
+      res.set('Expires', '0');
       res.sendFile(htmlPath);
     }
   } catch (error) {
     console.error('Error serving feed.html with icon:', error);
     // Fallback to default
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
     res.sendFile(path.join(__dirname, 'public', 'feed.html'));
   }
 });
@@ -2365,14 +2390,25 @@ app.get('/:albumId', async (req, res, next) => {
         console.log(`Index route: WARNING - apple-mobile-web-app-title meta tag not found in HTML`);
       }
       
+      // Add aggressive no-cache headers for HTML to prevent iOS caching
       res.set('Content-Type', 'text/html');
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+      res.set('Pragma', 'no-cache');
+      res.set('Expires', '0');
+      res.set('ETag', `"${Date.now()}-${albumId.substring(0, 10)}"`); // Unique ETag
       res.send(html);
     } else {
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+      res.set('Pragma', 'no-cache');
+      res.set('Expires', '0');
       res.sendFile(htmlPath);
     }
   } catch (error) {
     console.error('Error serving index.html with icon:', error);
     // Fallback to default
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
   }
 });

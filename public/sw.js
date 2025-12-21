@@ -1,12 +1,27 @@
 // Service Worker for iCloud Photo Album PWA
 // Handles badge notifications for new photos using navigator.setAppBadge
+// Version: 2 - Updated to handle cache busting
 
 const BADGE_CHECK_INTERVAL = 15 * 60 * 1000; // Check every 15 minutes
 const DB_NAME = 'icloud-album-badges';
 const DB_VERSION = 1;
+const CACHE_VERSION = 'v2'; // Increment this when you want to bust the cache
 
 // Install event
 self.addEventListener('install', (event) => {
+  // Delete old caches when updating
+  event.waitUntil(
+    caches.keys().then((cacheNames) => {
+      return Promise.all(
+        cacheNames
+          .filter((name) => name.includes('icloud-photo-album') && !name.includes(CACHE_VERSION))
+          .map((name) => {
+            console.log('Deleting old cache:', name);
+            return caches.delete(name);
+          })
+      );
+    })
+  );
   self.skipWaiting();
 });
 
@@ -14,14 +29,76 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
+      // Delete old caches when updating
+      const cacheNames = await caches.keys();
+      await Promise.all(
+        cacheNames
+          .filter((name) => name.includes('icloud-photo-album') && !name.includes(CACHE_VERSION))
+          .map((name) => {
+            console.log('Deleting old cache:', name);
+            return caches.delete(name);
+          })
+      );
+      
       // Don't claim clients immediately - let pages control their own navigation
       // This prevents the service worker from interfering with "Add to Homescreen"
       // Only claim clients after a delay to allow initial navigation
       setTimeout(async () => {
         await self.clients.claim();
       }, 1000);
+      
+      // Start periodic badge checks
+      if (checkInterval) {
+        clearInterval(checkInterval);
+      }
+      checkInterval = setInterval(checkForNewPhotos, BADGE_CHECK_INTERVAL);
+      // Initial check after a delay
+      setTimeout(() => {
+        checkForNewPhotos();
+      }, 2000);
     })()
   );
+});
+
+// Fetch event - don't cache HTML files, let them always be fresh
+self.addEventListener('fetch', (event) => {
+  // For HTML files, always fetch from network to avoid stale cache on iOS
+  const url = new URL(event.request.url);
+  const isHTML = event.request.destination === 'document' || 
+                 url.pathname.endsWith('.html') ||
+                 (event.request.headers.get('accept') && event.request.headers.get('accept').includes('text/html'));
+  
+  if (isHTML) {
+    event.respondWith(
+      fetch(event.request, { 
+        cache: 'no-store',
+        headers: new Headers({
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache'
+        })
+      }).catch(() => {
+        // If fetch fails, return a basic response
+        return new Response('Network error', { status: 408 });
+      })
+    );
+    return;
+  }
+  
+  // For JS/CSS files, use network-first with short cache for iOS
+  if (url.pathname.endsWith('.js') || url.pathname.endsWith('.css')) {
+    event.respondWith(
+      fetch(event.request, {
+        cache: 'reload' // Force revalidation
+      }).catch(() => {
+        // Fallback to cache if network fails
+        return caches.match(event.request);
+      })
+    );
+    return;
+  }
+  
+  // For all other requests, use default browser behavior (don't intercept)
+  // This ensures API calls and images work normally
 });
 
 // Initialize IndexedDB
@@ -213,18 +290,4 @@ self.addEventListener('periodicsync', (event) => {
 
 // Check for new photos periodically
 let checkInterval;
-self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    (async () => {
-      await self.clients.claim();
-      // Start periodic checks
-      if (checkInterval) {
-        clearInterval(checkInterval);
-      }
-      checkInterval = setInterval(checkForNewPhotos, BADGE_CHECK_INTERVAL);
-      // Initial check
-      await checkForNewPhotos();
-    })()
-  );
-});
 
