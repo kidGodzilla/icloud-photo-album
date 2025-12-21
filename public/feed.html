@@ -788,7 +788,6 @@
         }
 
         items = allItems;
-        photoItems = allItems.filter(item => !isVideo(item));
 
         // Update header
         if (data.metadata) {
@@ -1095,6 +1094,28 @@
       feed.innerHTML = '';
 
       let currentPhotoGrid = null;
+      
+      // Build photoItems array: includes photos AND skipped videos (videos without augmentation)
+      // Excludes only vlog posts (videos with augmentation)
+      photoItems = [];
+      items.forEach((item, index) => {
+        if (!isVideo(item)) {
+          // Regular photo - always include
+          photoItems.push(item);
+        } else {
+          // Video - check if it's skipped or has no augmentation (should be in photo grid)
+          const cacheKey = `${token}_${item.photoGuid}`;
+          const cachedAugmentation = videoAugmentations.get(cacheKey);
+          if (cachedAugmentation && cachedAugmentation.skipped) {
+            // Skipped video - include in photoItems for navigation
+            photoItems.push(item);
+          } else if (!cachedAugmentation || !(cachedAugmentation.blog || cachedAugmentation.transcription)) {
+            // Video with no augmentation or no blog/transcription - include in photoItems for navigation
+            photoItems.push(item);
+          }
+          // Videos with augmentation (vlog posts) are excluded from photoItems
+        }
+      });
 
       // Render all items - we already know augmentation status from pre-fetch
       items.forEach((item, index) => {
