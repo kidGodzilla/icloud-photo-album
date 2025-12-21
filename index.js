@@ -2197,8 +2197,10 @@ app.get('/feed/:token', async (req, res, next) => {
       let albumTitle = 'Photo Album';
       let appTitle = 'Photo Album';
       
+      console.log(`Feed route: Getting cached data for token: ${decryptedToken.substring(0, 10)}...`);
       if (cached && cached.data && cached.data.metadata) {
         const metadata = cached.data.metadata;
+        console.log(`Feed route: Found metadata:`, { streamName: metadata.streamName, userFirstName: metadata.userFirstName });
         if (metadata.streamName) {
           albumTitle = `${metadata.streamName} - Vlog Feed`;
           appTitle = metadata.streamName.length > 12 
@@ -2214,7 +2216,11 @@ app.get('/feed/:token', async (req, res, next) => {
           albumTitle = `${shortName}'s Feed - Vlog Feed`;
           appTitle = shortName.length > 12 ? shortName.substring(0, 12) + '...' : shortName;
         }
+      } else {
+        console.log(`Feed route: No cached data or metadata found`);
       }
+      
+      console.log(`Feed route: Using titles - albumTitle: "${albumTitle}", appTitle: "${appTitle}"`);
       
       // Read HTML file
       const htmlPath = path.join(__dirname, 'public', 'feed.html');
@@ -2240,11 +2246,18 @@ app.get('/feed/:token', async (req, res, next) => {
         `<title>${albumTitle}</title>`
       );
       
-      // Replace apple-mobile-web-app-title meta tag
-      html = html.replace(
-        /<meta[^>]*id="apple-mobile-web-app-title"[^>]*>/g,
-        `<meta id="apple-mobile-web-app-title" name="apple-mobile-web-app-title" content="${appTitle}" />`
-      );
+      // Replace apple-mobile-web-app-title meta tag - use a more specific pattern
+      // Escape special characters in appTitle
+      const escapedAppTitle = appTitle.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      const metaTagPattern = /<meta\s+id="apple-mobile-web-app-title"[^>]*>/i;
+      const replacement = `<meta id="apple-mobile-web-app-title" name="apple-mobile-web-app-title" content="${escapedAppTitle}" />`;
+      
+      if (metaTagPattern.test(html)) {
+        html = html.replace(metaTagPattern, replacement);
+        console.log(`Feed route: Replaced apple-mobile-web-app-title meta tag`);
+      } else {
+        console.log(`Feed route: WARNING - apple-mobile-web-app-title meta tag not found in HTML`);
+      }
       
       res.set('Content-Type', 'text/html');
       res.send(html);
@@ -2290,8 +2303,10 @@ app.get('/:albumId', async (req, res, next) => {
       let albumTitle = 'Photo Album';
       let appTitle = 'Photo Album';
       
+      console.log(`Index route: Getting cached data for token: ${decryptedToken.substring(0, 10)}...`);
       if (cached && cached.data && cached.data.metadata) {
         const metadata = cached.data.metadata;
+        console.log(`Index route: Found metadata:`, { streamName: metadata.streamName, userFirstName: metadata.userFirstName });
         if (metadata.streamName) {
           albumTitle = `${metadata.streamName} - Photo Album`;
           appTitle = metadata.streamName.length > 12 
@@ -2307,7 +2322,11 @@ app.get('/:albumId', async (req, res, next) => {
           albumTitle = `${shortName}'s Album - Photo Album`;
           appTitle = shortName.length > 12 ? shortName.substring(0, 12) + '...' : shortName;
         }
+      } else {
+        console.log(`Index route: No cached data or metadata found`);
       }
+      
+      console.log(`Index route: Using titles - albumTitle: "${albumTitle}", appTitle: "${appTitle}"`);
       
       // Read HTML file
       const htmlPath = path.join(__dirname, 'public', 'index.html');
@@ -2333,11 +2352,18 @@ app.get('/:albumId', async (req, res, next) => {
         `<title>${albumTitle}</title>`
       );
       
-      // Replace apple-mobile-web-app-title meta tag
-      html = html.replace(
-        /<meta[^>]*id="apple-mobile-web-app-title"[^>]*>/g,
-        `<meta id="apple-mobile-web-app-title" name="apple-mobile-web-app-title" content="${appTitle}" />`
-      );
+      // Replace apple-mobile-web-app-title meta tag - use a more specific pattern
+      // Escape special characters in appTitle
+      const escapedAppTitle = appTitle.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      const metaTagPattern = /<meta\s+id="apple-mobile-web-app-title"[^>]*>/i;
+      const replacement = `<meta id="apple-mobile-web-app-title" name="apple-mobile-web-app-title" content="${escapedAppTitle}" />`;
+      
+      if (metaTagPattern.test(html)) {
+        html = html.replace(metaTagPattern, replacement);
+        console.log(`Index route: Replaced apple-mobile-web-app-title meta tag`);
+      } else {
+        console.log(`Index route: WARNING - apple-mobile-web-app-title meta tag not found in HTML`);
+      }
       
       res.set('Content-Type', 'text/html');
       res.send(html);
