@@ -1873,6 +1873,45 @@
       }
     });
 
+    // Service Worker registration and badge management
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').then((registration) => {
+        console.log('Service Worker registered:', registration);
+        
+        // Update tracked tokens when feed loads
+        if (token) {
+          updateTrackedTokens([token]);
+        }
+      }).catch((error) => {
+        console.error('Service Worker registration failed:', error);
+      });
+    }
+
+    // Update tracked tokens in service worker
+    function updateTrackedTokens(tokens) {
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        const channel = new MessageChannel();
+        channel.port1.onmessage = (event) => {
+          if (event.data.success) {
+            console.log('Tracked tokens updated in service worker');
+          }
+        };
+        navigator.serviceWorker.controller.postMessage(
+          { type: 'UPDATE_TRACKED_TOKENS', tokens },
+          [channel.port2]
+        );
+      }
+    }
+
+    // Clear badge when user opens the app
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      const channel = new MessageChannel();
+      navigator.serviceWorker.controller.postMessage(
+        { type: 'CLEAR_BADGE' },
+        [channel.port2]
+      );
+    }
+
     // Touch swipe for photo lightbox
     document.getElementById('lightbox').addEventListener('touchstart', (e) => {
       touchStartX = e.changedTouches[0].screenX;

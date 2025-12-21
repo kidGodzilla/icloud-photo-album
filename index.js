@@ -1027,6 +1027,42 @@ app.get('/api/album/:token', async (req, res) => {
   }
 });
 
+// Badge check endpoint - lightweight endpoint that just returns photo count
+app.get('/api/badge-check/:token', async (req, res) => {
+  try {
+    let { token } = req.params;
+    
+    if (!token) {
+      return res.status(400).json({ error: 'Album token is required' });
+    }
+
+    // Decrypt token if encrypted
+    let decryptedToken;
+    try {
+      decryptedToken = decryptToken(token);
+    } catch (error) {
+      return res.status(400).json({ error: 'Invalid token' });
+    }
+
+    if (!decryptedToken) {
+      return res.status(400).json({ error: 'Invalid token' });
+    }
+
+    // Get cached data (don't force refresh for badge checks)
+    const cached = await getCachedData(decryptedToken);
+    if (cached && cached.photos) {
+      return res.json({ photoCount: cached.photos.length });
+    }
+
+    // If no cache, fetch minimal data
+    const data = await getImages(decryptedToken);
+    return res.json({ photoCount: data.photos?.length || 0 });
+  } catch (error) {
+    console.error('Error in badge check:', error);
+    res.status(500).json({ error: 'Failed to check badge', photoCount: 0 });
+  }
+});
+
 // Track token for background refresh (uses decrypted token as key)
 function trackTokenForRefresh(decryptedToken) {
   // Update or add token to tracking map (use decrypted token as key)
