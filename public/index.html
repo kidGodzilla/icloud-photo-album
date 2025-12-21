@@ -851,14 +851,15 @@
     });
 
     // Service Worker registration and badge management
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').then((registration) => {
+    // Only register on album pages (not landing page)
+    if ('serviceWorker' in navigator && token) {
+      navigator.serviceWorker.register('/sw.js', {
+        scope: window.location.pathname // Scope to current album path
+      }).then((registration) => {
         console.log('Service Worker registered:', registration);
         
         // Update tracked tokens when album loads
-        if (token) {
-          updateTrackedTokens([token]);
-        }
+        updateTrackedTokens([token]);
       }).catch((error) => {
         console.error('Service Worker registration failed:', error);
       });

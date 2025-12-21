@@ -12,7 +12,16 @@ self.addEventListener('install', (event) => {
 
 // Activate event
 self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    (async () => {
+      // Don't claim clients immediately - let pages control their own navigation
+      // This prevents the service worker from interfering with "Add to Homescreen"
+      // Only claim clients after a delay to allow initial navigation
+      setTimeout(async () => {
+        await self.clients.claim();
+      }, 1000);
+    })()
+  );
 });
 
 // Initialize IndexedDB

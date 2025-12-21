@@ -26,11 +26,12 @@ const ALBUMS_CACHE_DIR = path.join(CACHE_DIR, 'albums');
 const IMAGES_CACHE_DIR = path.join(CACHE_DIR, 'images');
 const MAPPINGS_CACHE_DIR = path.join(CACHE_DIR, 'mappings');
 const VIDEO_AUGMENTATIONS_CACHE_DIR = path.join(CACHE_DIR, 'video-augmentations');
+const ICONS_CACHE_DIR = path.join(CACHE_DIR, 'icons');
 const TMP_DIR = path.join(__dirname, 'tmp');
 
 // Ensure cache directories exist
 async function ensureCacheDirs() {
-  const dirs = [CACHE_DIR, ALBUMS_CACHE_DIR, IMAGES_CACHE_DIR, MAPPINGS_CACHE_DIR, VIDEO_AUGMENTATIONS_CACHE_DIR, TMP_DIR];
+  const dirs = [CACHE_DIR, ALBUMS_CACHE_DIR, IMAGES_CACHE_DIR, MAPPINGS_CACHE_DIR, VIDEO_AUGMENTATIONS_CACHE_DIR, ICONS_CACHE_DIR, TMP_DIR];
   for (const dir of dirs) {
     if (!existsSync(dir)) {
       await fs.mkdir(dir, { recursive: true });
@@ -1027,6 +1028,232 @@ app.get('/api/album/:token', async (req, res) => {
   }
 });
 
+// Generate composite icon from 4 oldest images
+async function generateAlbumIcon(decryptedToken) {
+  try {
+    const iconFile = path.join(ICONS_CACHE_DIR, `${sanitizeToken(decryptedToken)}.png`);
+    
+    // Check if icon already exists
+    if (existsSync(iconFile)) {
+      const stats = await fs.stat(iconFile);
+      const age = Date.now() - stats.mtimeMs;
+      // Cache icon for 7 days
+      if (age < 7 * 24 * 60 * 60 * 1000) {
+        console.log(`Serving cached icon for token: ${decryptedToken.substring(0, 10)}...`);
+        return iconFile;
+      }
+    }
+
+    console.log(`Generating icon for token: ${decryptedToken.substring(0, 10)}...`);
+
+    // Get album data
+    const cached = await getCachedData(decryptedToken);
+    if (!cached || !cached.data || !cached.data.photos || !Array.isArray(cached.data.photos)) {
+      console.log(`No cached data or photos array for token: ${decryptedToken.substring(0, 10)}...`);
+      return null;
+    }
+
+    const albumData = cached.data;
+    console.log(`Found ${albumData.photos.length} photos in cache`);
+
+    // Filter out videos, get only images
+    const images = albumData.photos
+      .filter(photo => !isVideo(photo))
+      .sort((a, b) => {
+        const dateA = new Date(a.dateCreated || a.batchDateCreated || 0);
+        const dateB = new Date(b.dateCreated || b.batchDateCreated || 0);
+        return dateA - dateB; // Oldest first
+      })
+      .slice(0, 4); // Get 4 oldest
+
+    console.log(`Filtered to ${images.length} images (oldest 4)`);
+
+    if (images.length === 0) {
+      console.log(`No images found (all may be videos) for token: ${decryptedToken.substring(0, 10)}...`);
+      return null;
+    }
+
+    // Get best thumbnail for each image
+    const thumbnailPromises = images.map(async (photo) => {
+      const thumbnail = getBestThumbnail(photo);
+      if (!thumbnail || !thumbnail.url) {
+        return null;
+      }
+
+      // If it's a proxied URL, get the original URL
+      let imageUrl = thumbnail.url;
+      if (imageUrl.startsWith('/api/image/')) {
+        const secureId = imageUrl.replace('/api/image/', '').replace('.jpg', '');
+        imageUrl = await getImageUrl(secureId);
+        if (!imageUrl) {
+          return null;
+        }
+      }
+
+      try {
+        // Fetch and resize image to 90x90 (for 180x180 icon, 2x2 grid)
+        const response = await fetch(imageUrl);
+        if (!response.ok) {
+          return null;
+        }
+        const buffer = Buffer.from(await response.arrayBuffer());
+        const resized = await sharp(buffer)
+          .resize(90, 90, { fit: 'cover', position: 'center' })
+          .toBuffer();
+        return resized;
+      } catch (error) {
+        console.error('Error fetching thumbnail for icon:', error);
+        return null;
+      }
+    });
+
+    const thumbnails = (await Promise.all(thumbnailPromises)).filter(Boolean);
+    
+    console.log(`Successfully fetched ${thumbnails.length} thumbnails`);
+    
+    if (thumbnails.length === 0) {
+      console.log(`Failed to fetch any thumbnails for token: ${decryptedToken.substring(0, 10)}...`);
+      return null;
+    }
+
+    // Create 2x2 grid composite
+    // If we have fewer than 4, duplicate the last one or use a placeholder
+    while (thumbnails.length < 4) {
+      thumbnails.push(thumbnails[thumbnails.length - 1] || thumbnails[0]);
+    }
+
+    console.log(`Creating composite icon with ${thumbnails.length} thumbnails`);
+
+    // Create composite: 180x180 PNG with 2x2 grid of 90x90 images
+    const composite = await sharp({
+      create: {
+        width: 180,
+        height: 180,
+        channels: 3,
+        background: { r: 0, g: 0, b: 0 }
+      }
+    })
+      .composite([
+        { input: thumbnails[0], left: 0, top: 0 },      // Top-left
+        { input: thumbnails[1], left: 90, top: 0 },    // Top-right
+        { input: thumbnails[2], left: 0, top: 90 },     // Bottom-left
+        { input: thumbnails[3], left: 90, top: 90 }    // Bottom-right
+      ])
+      .png()
+      .toBuffer();
+
+    await fs.writeFile(iconFile, composite);
+    console.log(`Icon generated successfully: ${iconFile}`);
+    return iconFile;
+  } catch (error) {
+    console.error('Error generating album icon:', error);
+    console.error('Stack:', error.stack);
+    return null;
+  }
+}
+
+// Helper function to get best thumbnail for icon generation
+function getBestThumbnail(photo) {
+  if (!photo || !photo.derivatives || typeof photo.derivatives !== 'object') {
+    return null;
+  }
+
+  // For videos, prioritize JPG thumbnails
+  const isVideoItem = isVideo(photo);
+  
+  // Get all derivative keys and sort by size (largest first for images, or find JPG for videos)
+  const derivativeKeys = Object.keys(photo.derivatives);
+  
+  if (isVideoItem) {
+    // For videos, find JPG thumbnail
+    const jpgKey = derivativeKeys.find(key => {
+      const deriv = photo.derivatives[key];
+      return deriv && deriv.url && deriv.url.toLowerCase().includes('.jpg');
+    });
+    if (jpgKey && photo.derivatives[jpgKey]) {
+      return photo.derivatives[jpgKey];
+    }
+  }
+  
+  // For images or if no JPG found for video, get largest derivative
+  // Handle numeric keys and non-numeric keys
+  const numericKeys = derivativeKeys.filter(k => !isNaN(parseInt(k)));
+  const sortedNumeric = numericKeys.sort((a, b) => parseInt(b) - parseInt(a));
+  
+  if (sortedNumeric.length > 0) {
+    const largestKey = sortedNumeric[0];
+    return photo.derivatives[largestKey];
+  }
+  
+  // Fallback to first available derivative
+  const firstKey = derivativeKeys[0];
+  return firstKey ? photo.derivatives[firstKey] : null;
+}
+
+// Icon endpoint - use regex to capture token with special characters
+app.get(/^\/api\/icon\/(.+)$/, async (req, res) => {
+  try {
+    // Extract token from regex match (everything after /api/icon/)
+    let token = req.params[0];
+    
+    // Remove .png extension if present
+    if (token.endsWith('.png')) {
+      token = token.slice(0, -4);
+    }
+    
+    // Decode URL-encoded characters (like +, =, etc.)
+    try {
+      token = decodeURIComponent(token);
+    } catch (e) {
+      // If decode fails, use token as-is
+      console.warn('Failed to decode token, using as-is:', e.message);
+    }
+    
+    if (!token) {
+      return res.status(400).json({ error: 'Token is required' });
+    }
+
+    // Decrypt token if encrypted
+    let decryptedToken;
+    try {
+      decryptedToken = decryptToken(token);
+    } catch (error) {
+      console.error('Token decryption error in icon endpoint:', error.message);
+      return res.status(400).json({ error: 'Invalid token' });
+    }
+
+    if (!decryptedToken) {
+      return res.status(400).json({ error: 'Invalid token' });
+    }
+
+    // Generate or get cached icon
+    const iconFile = await generateAlbumIcon(decryptedToken);
+    
+    if (!iconFile || !existsSync(iconFile)) {
+      // Fallback to default icon if generation failed
+      const defaultIconPath = path.join(__dirname, 'public', 'apple-touch-icon.png');
+      if (existsSync(defaultIconPath)) {
+        console.log(`Serving default icon for token: ${decryptedToken.substring(0, 10)}...`);
+        const iconBuffer = await fs.readFile(defaultIconPath);
+        res.set('Content-Type', 'image/png');
+        res.set('Cache-Control', 'public, max-age=604800'); // Cache for 7 days
+        return res.send(iconBuffer);
+      }
+      // If no default icon, return 404
+      console.error(`Icon not found and no default icon available for token: ${decryptedToken.substring(0, 10)}...`);
+      return res.status(404).json({ error: 'Icon not found' });
+    }
+
+    const iconBuffer = await fs.readFile(iconFile);
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'public, max-age=604800'); // Cache for 7 days
+    res.send(iconBuffer);
+  } catch (error) {
+    console.error('Error serving icon:', error);
+    res.status(500).json({ error: 'Failed to serve icon' });
+  }
+});
+
 // Badge check endpoint - lightweight endpoint that just returns photo count
 app.get('/api/badge-check/:token', async (req, res) => {
   try {
@@ -1792,19 +2019,152 @@ app.get('/api/video-augmentation/:albumToken/:photoGuid', async (req, res) => {
   }
 });
 
-// Serve feed.html for feed routes (/feed/:token)
-app.get('/feed/:token', (req, res, next) => {
+// Dynamic manifest endpoint for album pages
+app.get('/feed/:token/manifest.json', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const manifest = {
+      name: "Photo Album",
+      short_name: "Album",
+      icons: [
+        {
+          src: `/api/icon/${token}.png`,
+          sizes: "180x180",
+          type: "image/png",
+          purpose: "any"
+        },
+        {
+          src: "/web-app-manifest-192x192.png",
+          sizes: "192x192",
+          type: "image/png",
+          purpose: "maskable"
+        },
+        {
+          src: "/web-app-manifest-512x512.png",
+          sizes: "512x512",
+          type: "image/png",
+          purpose: "maskable"
+        }
+      ],
+      theme_color: "#2c2c2c",
+      background_color: "#2c2c2c",
+      display: "standalone",
+      start_url: `/feed/${token}`,
+      scope: `/feed/${token}`
+    };
+    res.set('Content-Type', 'application/manifest+json');
+    res.json(manifest);
+  } catch (error) {
+    console.error('Error serving dynamic manifest:', error);
+    res.status(500).json({ error: 'Failed to serve manifest' });
+  }
+});
+
+// Dynamic manifest endpoint for album pages (index.html)
+app.get('/:albumId/manifest.json', async (req, res, next) => {
+  // Exclude API paths
   if (req.path.startsWith('/api')) {
     return next();
   }
   
-  // Serve feed.html - frontend will handle encrypted tokens via API
-  res.sendFile(path.join(__dirname, 'public', 'feed.html'));
+  // Exclude paths with file extensions
+  const hasExtension = /\.[a-zA-Z0-9]+$/.test(req.path);
+  if (hasExtension) {
+    return next();
+  }
+  
+  try {
+    const { albumId } = req.params;
+    const manifest = {
+      name: "Photo Album",
+      short_name: "Album",
+      icons: [
+        {
+          src: `/api/icon/${albumId}.png`,
+          sizes: "180x180",
+          type: "image/png",
+          purpose: "any"
+        },
+        {
+          src: "/web-app-manifest-192x192.png",
+          sizes: "192x192",
+          type: "image/png",
+          purpose: "maskable"
+        },
+        {
+          src: "/web-app-manifest-512x512.png",
+          sizes: "512x512",
+          type: "image/png",
+          purpose: "maskable"
+        }
+      ],
+      theme_color: "#2c2c2c",
+      background_color: "#2c2c2c",
+      display: "standalone",
+      start_url: `/${albumId}`,
+      scope: `/${albumId}`
+    };
+    res.set('Content-Type', 'application/manifest+json');
+    res.json(manifest);
+  } catch (error) {
+    console.error('Error serving dynamic manifest:', error);
+    res.status(500).json({ error: 'Failed to serve manifest' });
+  }
+});
+
+// Serve feed.html for feed routes (/feed/:token)
+app.get('/feed/:token', async (req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    return next();
+  }
+  
+  // Inject dynamic icon URL into HTML
+  try {
+    let { token } = req.params;
+    
+    // Decrypt token if encrypted
+    let decryptedToken;
+    try {
+      decryptedToken = decryptToken(token);
+    } catch (error) {
+      // If decryption fails, serve default HTML
+      return res.sendFile(path.join(__dirname, 'public', 'feed.html'));
+    }
+
+    if (decryptedToken) {
+      // Read HTML file
+      const htmlPath = path.join(__dirname, 'public', 'feed.html');
+      let html = await fs.readFile(htmlPath, 'utf-8');
+      
+      // Replace apple-touch-icon URL with dynamic one
+      const iconUrl = `/api/icon/${token}.png`;
+      html = html.replace(
+        /<link rel="apple-touch-icon"[^>]*>/g,
+        `<link rel="apple-touch-icon" sizes="180x180" href="${iconUrl}" />`
+      );
+      
+      // Replace manifest URL with dynamic one
+      const manifestUrl = `/feed/${token}/manifest.json`;
+      html = html.replace(
+        /<link rel="manifest"[^>]*>/g,
+        `<link rel="manifest" href="${manifestUrl}" />`
+      );
+      
+      res.set('Content-Type', 'text/html');
+      res.send(html);
+    } else {
+      res.sendFile(htmlPath);
+    }
+  } catch (error) {
+    console.error('Error serving feed.html with icon:', error);
+    // Fallback to default
+    res.sendFile(path.join(__dirname, 'public', 'feed.html'));
+  }
 });
 
 // Serve index.html for album routes (/:albumId)
 // Exclude /api paths and file extensions to avoid conflicts
-app.get('/:albumId', (req, res, next) => {
+app.get('/:albumId', async (req, res, next) => {
   if (req.path.startsWith('/api')) {
     return next();
   }
@@ -1815,8 +2175,48 @@ app.get('/:albumId', (req, res, next) => {
     return next();
   }
   
-  // Serve index.html - frontend will handle encrypted tokens via API
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  // Inject dynamic icon URL into HTML
+  try {
+    const { albumId } = req.params;
+    
+    // Decrypt token if encrypted
+    let decryptedToken;
+    try {
+      decryptedToken = decryptToken(albumId);
+    } catch (error) {
+      // If decryption fails, serve default HTML
+      return res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    }
+
+    if (decryptedToken) {
+      // Read HTML file
+      const htmlPath = path.join(__dirname, 'public', 'index.html');
+      let html = await fs.readFile(htmlPath, 'utf-8');
+      
+      // Replace apple-touch-icon URL with dynamic one
+      const iconUrl = `/api/icon/${albumId}.png`;
+      html = html.replace(
+        /<link rel="apple-touch-icon"[^>]*>/g,
+        `<link rel="apple-touch-icon" sizes="180x180" href="${iconUrl}" />`
+      );
+      
+      // Replace manifest URL with dynamic one
+      const manifestUrl = `/${albumId}/manifest.json`;
+      html = html.replace(
+        /<link rel="manifest"[^>]*>/g,
+        `<link rel="manifest" href="${manifestUrl}" />`
+      );
+      
+      res.set('Content-Type', 'text/html');
+      res.send(html);
+    } else {
+      res.sendFile(htmlPath);
+    }
+  } catch (error) {
+    console.error('Error serving index.html with icon:', error);
+    // Fallback to default
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  }
 });
 
 app.listen(PORT, () => {
