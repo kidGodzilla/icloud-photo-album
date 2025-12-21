@@ -538,7 +538,7 @@
     /* Captions styling */
     .vlog-captions {
       position: absolute;
-      bottom: 20px;
+      bottom: 60px; /* Nudged up to avoid overlapping video controls */
       left: 50%;
       transform: translateX(-50%);
       background: rgba(0, 0, 0, 0.75);
@@ -565,7 +565,7 @@
       .vlog-captions {
         font-size: 14px;
         padding: 6px 12px;
-        bottom: 15px;
+        bottom: 55px; /* Nudged up to avoid overlapping video controls on mobile */
       }
     }
 
@@ -749,6 +749,8 @@
     let currentPhotoIndex = 0;
     let touchStartX = 0;
     let touchEndX = 0;
+    let touchStartY = 0;
+    let touchEndY = 0;
     let token = ''; // Album token from URL
 
     // Get token from URL path (e.g., /feed/B1v532ODWVjCzg)
@@ -1804,6 +1806,38 @@
       }
     });
 
+    // Touch swipe for vlog lightbox
+    let vlogTouchStartY = 0;
+    let vlogTouchEndY = 0;
+    
+    document.getElementById('vlog-lightbox').addEventListener('touchstart', (e) => {
+      vlogTouchStartY = e.changedTouches[0].screenY;
+    });
+
+    document.getElementById('vlog-lightbox').addEventListener('touchend', (e) => {
+      vlogTouchEndY = e.changedTouches[0].screenY;
+      
+      // Only handle swipe if vlog lightbox is active
+      if (!document.getElementById('vlog-lightbox').classList.contains('active')) {
+        return;
+      }
+
+      const swipeThreshold = 50;
+      const diffY = vlogTouchStartY - vlogTouchEndY;
+
+      // Check for vertical swipe down
+      if (Math.abs(diffY) > swipeThreshold && diffY < 0) {
+        // Swipe down - close vlog lightbox
+        document.getElementById('vlog-lightbox').classList.remove('active');
+        document.body.classList.remove('lightbox-open');
+        const vlogVideo = document.getElementById('vlog-lightbox-video');
+        if (vlogVideo) {
+          vlogVideo.pause();
+          vlogVideo.src = '';
+        }
+      }
+    });
+
     document.getElementById('vlog-lightbox-close').addEventListener('click', () => {
       const vlogLightbox = document.getElementById('vlog-lightbox');
       const vlogVideo = document.getElementById('vlog-lightbox-video');
@@ -1842,19 +1876,36 @@
     // Touch swipe for photo lightbox
     document.getElementById('lightbox').addEventListener('touchstart', (e) => {
       touchStartX = e.changedTouches[0].screenX;
+      touchStartY = e.changedTouches[0].screenY;
     });
 
     document.getElementById('lightbox').addEventListener('touchend', (e) => {
       touchEndX = e.changedTouches[0].screenX;
+      touchEndY = e.changedTouches[0].screenY;
       handleSwipe();
     });
 
     function handleSwipe() {
-      const swipeThreshold = 50;
-      const diff = touchStartX - touchEndX;
+      // Only handle swipe if lightbox is active
+      if (!document.getElementById('lightbox').classList.contains('active')) {
+        return;
+      }
 
-      if (Math.abs(diff) > swipeThreshold) {
-        if (diff > 0) {
+      const swipeThreshold = 50;
+      const diffX = touchStartX - touchEndX;
+      const diffY = touchStartY - touchEndY;
+
+      // Check for vertical swipe (down) - prioritize over horizontal
+      if (Math.abs(diffY) > swipeThreshold && Math.abs(diffY) > Math.abs(diffX)) {
+        if (diffY < 0) {
+          // Swipe down - close lightbox
+          document.getElementById('lightbox').classList.remove('active');
+          document.body.classList.remove('lightbox-open');
+          document.getElementById('lightbox-video').pause();
+        }
+      } else if (Math.abs(diffX) > swipeThreshold) {
+        // Horizontal swipe
+        if (diffX > 0) {
           // Swipe left - next
           document.getElementById('lightbox-next').click();
         } else {
