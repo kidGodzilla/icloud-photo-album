@@ -61,6 +61,35 @@ let ffmpegPath = null;
 let ffprobePath = null;
 
 (async function setupFFmpeg() {
+  // Check for system ffmpeg first (more reliable on Linux servers)
+  const { exec } = await import('child_process');
+  const { promisify } = await import('util');
+  const execAsync = promisify(exec);
+  
+  try {
+    // Test if system ffmpeg is available
+    await execAsync('which ffmpeg');
+    const { stdout: ffmpegSystemPath } = await execAsync('which ffmpeg');
+    const { stdout: ffprobeSystemPath } = await execAsync('which ffprobe').catch(() => ({ stdout: '' }));
+    
+    if (ffmpegSystemPath && ffmpegSystemPath.trim()) {
+      ffmpegPath = ffmpegSystemPath.trim();
+      ffmpeg.setFfmpegPath(ffmpegPath);
+      console.log('Using system FFmpeg:', ffmpegPath);
+      
+      if (ffprobeSystemPath && ffprobeSystemPath.trim()) {
+        ffprobePath = ffprobeSystemPath.trim();
+        ffmpeg.setFfprobePath(ffprobePath);
+        console.log('Using system FFprobe:', ffprobePath);
+      }
+      return; // Use system binaries
+    }
+  } catch (e) {
+    // System ffmpeg not found, try static binaries
+    console.log('System ffmpeg not found, trying static binaries...');
+  }
+
+  // Fallback to static binaries
   try {
     const pathToFfmpeg = await import('ffmpeg-static');
     const pathToFfprobe = await import('ffprobe-static');
@@ -77,7 +106,7 @@ let ffprobePath = null;
       // Verify the ffmpeg binary exists and is executable
       if (existsSync(ffmpegPath)) {
         ffmpeg.setFfmpegPath(ffmpegPath);
-        console.log('FFmpeg path configured:', ffmpegPath);
+        console.log('FFmpeg path configured (static):', ffmpegPath);
       } else {
         console.warn(`FFmpeg binary not found at path: ${ffmpegPath}`);
       }
@@ -86,14 +115,14 @@ let ffprobePath = null;
       // Verify the ffprobe binary exists and is executable
       if (existsSync(ffprobePath)) {
         ffmpeg.setFfprobePath(ffprobePath);
-        console.log('FFprobe path configured:', ffprobePath);
+        console.log('FFprobe path configured (static):', ffprobePath);
       } else {
         console.warn(`FFprobe binary not found at path: ${ffprobePath}`);
       }
     }
   } catch(e) {
-    console.warn('FFmpeg static binaries not found, using system ffmpeg:', e.message);
-    console.warn('If you see SIGSEGV errors, the system ffmpeg may be incompatible. Consider installing ffmpeg-static.');
+    console.warn('FFmpeg static binaries not found:', e.message);
+    console.warn('Please install ffmpeg and ffprobe system-wide: apt-get install ffmpeg');
   }
 })();
 
@@ -107,39 +136,73 @@ let whisperInstalled = false;
 
 // Initialize Whisper.cpp (async, non-blocking) - following example pattern
 (async function() {
-  // If custom WHISPER_DIR is set, skip installation and just verify it exists
-  if (process.env.WHISPER_DIR) {
-    if (existsSync(WHISPER_EXE) && existsSync(WHISPER_MODEL_PATH)) {
+  // Ensure WHISPER_DIR exists
+  try {
+    await fs.mkdir(WHISPER_DIR, { recursive: true });
+  } catch (e) {
+    console.warn(`Could not create WHISPER_DIR ${WHISPER_DIR}:`, e.message);
+  }
+
+  // Check if whisper.cpp already exists - if so, just verify and download model if needed
+  if (existsSync(WHISPER_EXE)) {
+    console.log(`Whisper.cpp executable found at: ${WHISPER_EXE}`);
+    // Check if model exists
+    if (existsSync(WHISPER_MODEL_PATH)) {
       whisperInstalled = true;
       console.log(`Using Whisper.cpp from: ${WHISPER_DIR}`);
       return;
     } else {
-      console.warn(`WHISPER_DIR set to ${WHISPER_DIR} but executable or model not found`);
-      return;
+      // Executable exists but model is missing, download it
+      console.log('Whisper.cpp executable found, downloading model...');
+      try {
+        await downloadWhisperModel({
+          model: WHISPER_MODEL,
+          folder: WHISPER_DIR,
+        });
+        if (existsSync(WHISPER_MODEL_PATH)) {
+          whisperInstalled = true;
+          console.log(`Whisper.cpp ready at: ${WHISPER_DIR}`);
+          return;
+        }
+      } catch (e) {
+        console.warn('Failed to download Whisper model:', e.message);
+      }
     }
   }
 
+  // If we get here, we need to install whisper.cpp
   try {
-    // Check if whisper.cpp already exists - if so, just download model
-    if (existsSync(WHISPER_EXE)) {
-      console.log('Whisper.cpp executable found, downloading model only...');
-      await downloadWhisperModel({
-        model: WHISPER_MODEL,
-        folder: WHISPER_DIR,
-      });
+    if (process.env.WHISPER_DIR) {
+      console.log(`Installing Whisper.cpp to custom directory: ${WHISPER_DIR}`);
     } else {
-      // Install from source
-      await installWhisperCpp({ to: WHISPER_DIR, version: '1.7.1' });
-      await downloadWhisperModel({
-        model: WHISPER_MODEL,
-        folder: WHISPER_DIR,
-      });
+      console.log('Installing Whisper.cpp...');
     }
+    
+    // Check for incomplete installation and clean it up
+    if (existsSync(WHISPER_DIR) && !existsSync(WHISPER_EXE)) {
+      console.log('Incomplete whisper.cpp installation detected. Attempting to clean up...');
+      try {
+        await fs.rm(WHISPER_DIR, { recursive: true, force: true });
+        await fs.mkdir(WHISPER_DIR, { recursive: true });
+        console.log('Cleaned up incomplete installation');
+      } catch (cleanupError) {
+        console.warn('Could not clean up incomplete installation:', cleanupError.message);
+      }
+    }
+    
+    // Install from source
+    await installWhisperCpp({ to: WHISPER_DIR, version: '1.7.1' });
+    await downloadWhisperModel({
+      model: WHISPER_MODEL,
+      folder: WHISPER_DIR,
+    });
     
     // Verify installation
     if (existsSync(WHISPER_EXE) && existsSync(WHISPER_MODEL_PATH)) {
       whisperInstalled = true;
-      console.log('whisper.cpp installed locally at', WHISPER_DIR);
+      console.log(`Whisper.cpp installed at: ${WHISPER_DIR}`);
+    } else {
+      console.warn(`Whisper.cpp installation incomplete. Expected executable at: ${WHISPER_EXE}, model at: ${WHISPER_MODEL_PATH}`);
     }
   } catch(e) {
     // If executable exists despite error, we can still use it
@@ -148,6 +211,11 @@ let whisperInstalled = false;
       console.log('Whisper.cpp available (using existing installation)');
     } else {
       console.log('Whisper.cpp installation error (video transcription will be unavailable):', e.message);
+      if (process.env.WHISPER_DIR) {
+        console.log(`WHISPER_DIR is set to: ${WHISPER_DIR}`);
+        console.log(`Expected executable at: ${WHISPER_EXE}`);
+        console.log(`Expected model at: ${WHISPER_MODEL_PATH}`);
+      }
     }
   }
 })();
