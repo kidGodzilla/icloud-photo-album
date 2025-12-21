@@ -1405,10 +1405,10 @@ async function blogifyTranscription(transcription, meaningfulWordCount = null) {
     throw new Error('OpenAI API key not configured');
   }
 
-  // Build quality warning if content seems limited
+  // Build quality warning if content seems very limited (only for very short transcriptions)
   let qualityWarning = '';
-  if (meaningfulWordCount !== null && meaningfulWordCount < 50) {
-    qualityWarning = `\n\nIMPORTANT: This transcription appears to have limited content (approximately ${meaningfulWordCount} meaningful words). If the transcript is mostly music markers, sound effects, or very brief/nonsubstantial content, respond with ONLY the text: "[INSUFFICIENT_CONTENT]" without any markdown formatting or additional commentary. Do NOT create a blog post from minimal or repetitive content. Only proceed if there is actual substantial dialogue or narration to work with.`;
+  if (meaningfulWordCount !== null && meaningfulWordCount < 20) {
+    qualityWarning = `\n\nIMPORTANT: This transcription appears to have very limited content (approximately ${meaningfulWordCount} meaningful words). If the transcript is mostly music markers, sound effects, or very brief/nonsubstantial content, respond with ONLY the text: "[INSUFFICIENT_CONTENT]" without any markdown formatting or additional commentary. Do NOT create a blog post from minimal or repetitive content. Only proceed if there is actual substantial dialogue or narration to work with.`;
   }
 
   const prompt = `I have an audio blog post transcript. Format it as a Markdown blog post with headlines and rich formatting. Use the provided similarity percentage as a guide for how closely to stick to the original text.
@@ -1419,9 +1419,9 @@ Assume medium quality transcription, you're allowed to correct obvious errors. I
 - At 90% similarity, retain most of the original phrasing and structure, making only moderate adjustments for flow and readability.
 - At 95% similarity, keep very close to the original text, making only minor edits to fix glaring issues while focusing primarily on formatting.
 
-CRITICAL: If the transcript contains mostly music markers (like "(upbeat music)"), sound effects, or is too brief/nonsubstantial to create a meaningful blog post, respond with EXACTLY: [INSUFFICIENT_CONTENT]
+CRITICAL: Only respond with [INSUFFICIENT_CONTENT] if the transcript is PRIMARILY music markers (like "(upbeat music)" repeated many times), sound effects, or contains NO actual dialogue/narration. 
 
-Only create a blog post if there is actual substantial dialogue, narration, or meaningful content. Do NOT fabricate content or expand on minimal transcriptions.${qualityWarning}
+For transcripts with actual spoken content (even if brief), create a blog post. Short vlog posts are acceptable - just format the existing content nicely without fabricating additional material.${qualityWarning}
 
 Respond only the final markdown (or [INSUFFICIENT_CONTENT] if content is insufficient). No ticks surrounding it or any commentary about the task. This will be fed straight into a markdown parser and will throw an error if you deviate from this instruction.
 
@@ -1567,8 +1567,10 @@ async function processVideoAugmentation(albumToken, photoGuid, videoUrl) {
     const markerPercentage = (musicMarkerCount * 20) / transcription.length; // Rough estimate
     const meaningfulWordCount = meaningfulWords.length;
     
-    if (markerPercentage > 0.5 || meaningfulWordCount < 20) {
-      console.log(`Skipping video ${photoGuid}: low-quality transcription (${meaningfulWordCount} meaningful words, ${musicMarkerCount} music markers)`);
+    // More lenient threshold: skip only if >70% music markers OR <15 meaningful words
+    // 15 words is reasonable for a short video, and 47 words (like the user's example) should definitely pass
+    if (markerPercentage > 0.7 || meaningfulWordCount < 15) {
+      console.log(`Skipping video ${photoGuid}: low-quality transcription (${meaningfulWordCount} meaningful words, ${musicMarkerCount} music markers, ${(markerPercentage * 100).toFixed(1)}% markers)`);
       // Clean up
       await fs.unlink(audioPath).catch(() => {});
       // Cache the skipped state
@@ -1580,6 +1582,7 @@ async function processVideoAugmentation(albumToken, photoGuid, videoUrl) {
         transcriptionLength: transcription.length,
         meaningfulWordCount,
         musicMarkerCount,
+        markerPercentage: markerPercentage * 100,
         processedAt: new Date().toISOString()
       };
       await fs.writeFile(cacheFile, JSON.stringify(skippedAugmentation, null, 2), 'utf-8');
