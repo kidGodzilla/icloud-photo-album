@@ -833,14 +833,14 @@ app.get('/api/album/:token', async (req, res) => {
     // Store original data in cache (before rewriting URLs)
     await setCachedData(cacheKey, data, false);
     
-    // Trigger video augmentation processing for all videos in background
+    // Trigger video augmentation processing for all videos in background (with queue)
     if (data.photos && Array.isArray(data.photos)) {
       data.photos.forEach(photo => {
         if (isVideo(photo)) {
           const videoUrl = getVideoUrl(photo);
           if (videoUrl) {
-            // Process in background (don't await)
-            processVideoAugmentation(finalDecryptedToken, photo.photoGuid, videoUrl)
+            // Queue for processing (don't await)
+            queueVideoProcessing(finalDecryptedToken, photo.photoGuid, videoUrl)
               .then(augmentation => {
                 if (augmentation) {
                   console.log(`Background video augmentation complete for ${photo.photoGuid}`);
@@ -994,6 +994,42 @@ app.use(express.static(path.join(__dirname, 'public'), {
 // ============================================
 // VIDEO AUGMENTATION PIPELINE
 // ============================================
+
+// Video processing queue to limit concurrent processing
+const VIDEO_PROCESSING_QUEUE = [];
+let ACTIVE_VIDEO_PROCESSES = 0;
+const MAX_CONCURRENT_VIDEO_PROCESSES = process.env.MAX_CONCURRENT_VIDEO_PROCESSES 
+  ? parseInt(process.env.MAX_CONCURRENT_VIDEO_PROCESSES, 10) 
+  : 1; // Default to 1 at a time to avoid OOM
+
+// Process videos from queue
+async function processVideoQueue() {
+  if (ACTIVE_VIDEO_PROCESSES >= MAX_CONCURRENT_VIDEO_PROCESSES || VIDEO_PROCESSING_QUEUE.length === 0) {
+    return;
+  }
+
+  const { albumToken, photoGuid, videoUrl, resolve, reject } = VIDEO_PROCESSING_QUEUE.shift();
+  ACTIVE_VIDEO_PROCESSES++;
+
+  try {
+    const augmentation = await processVideoAugmentation(albumToken, photoGuid, videoUrl);
+    resolve(augmentation);
+  } catch (error) {
+    reject(error);
+  } finally {
+    ACTIVE_VIDEO_PROCESSES--;
+    // Process next item in queue
+    processVideoQueue();
+  }
+}
+
+// Queue video for processing (with concurrency limit)
+function queueVideoProcessing(albumToken, photoGuid, videoUrl) {
+  return new Promise((resolve, reject) => {
+    VIDEO_PROCESSING_QUEUE.push({ albumToken, photoGuid, videoUrl, resolve, reject });
+    processVideoQueue();
+  });
+}
 
 // Helper function to check if a photo is a video
 function isVideo(photo) {
@@ -1333,8 +1369,8 @@ app.get('/api/video-augmentation/:albumToken/:photoGuid', async (req, res) => {
         return res.status(404).json({ error: 'Video URL not found' });
       }
 
-      // Process in background (don't await)
-      processVideoAugmentation(decryptedToken, photoGuid, videoUrl)
+      // Queue for processing in background (don't await)
+      queueVideoProcessing(decryptedToken, photoGuid, videoUrl)
         .then(augmentation => {
           if (augmentation) {
             console.log(`Background processing complete for ${photoGuid}`);
