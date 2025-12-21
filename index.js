@@ -2023,9 +2023,39 @@ app.get('/api/video-augmentation/:albumToken/:photoGuid', async (req, res) => {
 app.get('/feed/:token/manifest.json', async (req, res) => {
   try {
     const { token } = req.params;
+    
+    // Get album metadata for manifest name
+    let decryptedToken;
+    try {
+      decryptedToken = decryptToken(token);
+    } catch (error) {
+      decryptedToken = null;
+    }
+    
+    let manifestName = "Photo Album";
+    let manifestShortName = "Album";
+    
+    if (decryptedToken) {
+      const cached = await getCachedData(decryptedToken);
+      if (cached && cached.data && cached.data.metadata) {
+        const metadata = cached.data.metadata;
+        if (metadata.streamName) {
+          manifestName = metadata.streamName;
+          manifestShortName = metadata.streamName.length > 12 
+            ? metadata.streamName.substring(0, 12) + '...' 
+            : metadata.streamName;
+        } else if (metadata.userFirstName) {
+          manifestName = `${metadata.userFirstName}'s Feed`;
+          manifestShortName = metadata.userFirstName.length > 12 
+            ? metadata.userFirstName.substring(0, 12) + '...' 
+            : metadata.userFirstName;
+        }
+      }
+    }
+    
     const manifest = {
-      name: "Photo Album",
-      short_name: "Album",
+      name: manifestName,
+      short_name: manifestShortName,
       icons: [
         {
           src: `/api/icon/${token}.png`,
@@ -2075,9 +2105,39 @@ app.get('/:albumId/manifest.json', async (req, res, next) => {
   
   try {
     const { albumId } = req.params;
+    
+    // Get album metadata for manifest name
+    let decryptedToken;
+    try {
+      decryptedToken = decryptToken(albumId);
+    } catch (error) {
+      decryptedToken = null;
+    }
+    
+    let manifestName = "Photo Album";
+    let manifestShortName = "Album";
+    
+    if (decryptedToken) {
+      const cached = await getCachedData(decryptedToken);
+      if (cached && cached.data && cached.data.metadata) {
+        const metadata = cached.data.metadata;
+        if (metadata.streamName) {
+          manifestName = metadata.streamName;
+          manifestShortName = metadata.streamName.length > 12 
+            ? metadata.streamName.substring(0, 12) + '...' 
+            : metadata.streamName;
+        } else if (metadata.userFirstName) {
+          manifestName = `${metadata.userFirstName}'s Album`;
+          manifestShortName = metadata.userFirstName.length > 12 
+            ? metadata.userFirstName.substring(0, 12) + '...' 
+            : metadata.userFirstName;
+        }
+      }
+    }
+    
     const manifest = {
-      name: "Photo Album",
-      short_name: "Album",
+      name: manifestName,
+      short_name: manifestShortName,
       icons: [
         {
           src: `/api/icon/${albumId}.png`,
@@ -2132,6 +2192,30 @@ app.get('/feed/:token', async (req, res, next) => {
     }
 
     if (decryptedToken) {
+      // Get album metadata for title
+      const cached = await getCachedData(decryptedToken);
+      let albumTitle = 'Photo Album';
+      let appTitle = 'Photo Album';
+      
+      if (cached && cached.data && cached.data.metadata) {
+        const metadata = cached.data.metadata;
+        if (metadata.streamName) {
+          albumTitle = `${metadata.streamName} - Vlog Feed`;
+          appTitle = metadata.streamName.length > 12 
+            ? metadata.streamName.substring(0, 12) + '...' 
+            : metadata.streamName;
+        } else if (metadata.userFirstName) {
+          albumTitle = `${metadata.userFirstName}'s Feed - Vlog Feed`;
+          appTitle = metadata.userFirstName.length > 12 
+            ? metadata.userFirstName.substring(0, 12) + '...' 
+            : metadata.userFirstName;
+        } else if (metadata.contributorFullName) {
+          const shortName = metadata.contributorFullName.split(' ')[0];
+          albumTitle = `${shortName}'s Feed - Vlog Feed`;
+          appTitle = shortName.length > 12 ? shortName.substring(0, 12) + '...' : shortName;
+        }
+      }
+      
       // Read HTML file
       const htmlPath = path.join(__dirname, 'public', 'feed.html');
       let html = await fs.readFile(htmlPath, 'utf-8');
@@ -2148,6 +2232,18 @@ app.get('/feed/:token', async (req, res, next) => {
       html = html.replace(
         /<link rel="manifest"[^>]*>/g,
         `<link rel="manifest" href="${manifestUrl}" />`
+      );
+      
+      // Replace title
+      html = html.replace(
+        /<title>.*?<\/title>/g,
+        `<title>${albumTitle}</title>`
+      );
+      
+      // Replace apple-mobile-web-app-title meta tag
+      html = html.replace(
+        /<meta[^>]*id="apple-mobile-web-app-title"[^>]*>/g,
+        `<meta id="apple-mobile-web-app-title" name="apple-mobile-web-app-title" content="${appTitle}" />`
       );
       
       res.set('Content-Type', 'text/html');
@@ -2189,6 +2285,30 @@ app.get('/:albumId', async (req, res, next) => {
     }
 
     if (decryptedToken) {
+      // Get album metadata for title
+      const cached = await getCachedData(decryptedToken);
+      let albumTitle = 'Photo Album';
+      let appTitle = 'Photo Album';
+      
+      if (cached && cached.data && cached.data.metadata) {
+        const metadata = cached.data.metadata;
+        if (metadata.streamName) {
+          albumTitle = `${metadata.streamName} - Photo Album`;
+          appTitle = metadata.streamName.length > 12 
+            ? metadata.streamName.substring(0, 12) + '...' 
+            : metadata.streamName;
+        } else if (metadata.userFirstName) {
+          albumTitle = `${metadata.userFirstName}'s Album - Photo Album`;
+          appTitle = metadata.userFirstName.length > 12 
+            ? metadata.userFirstName.substring(0, 12) + '...' 
+            : metadata.userFirstName;
+        } else if (metadata.contributorFullName) {
+          const shortName = metadata.contributorFullName.split(' ')[0];
+          albumTitle = `${shortName}'s Album - Photo Album`;
+          appTitle = shortName.length > 12 ? shortName.substring(0, 12) + '...' : shortName;
+        }
+      }
+      
       // Read HTML file
       const htmlPath = path.join(__dirname, 'public', 'index.html');
       let html = await fs.readFile(htmlPath, 'utf-8');
@@ -2205,6 +2325,18 @@ app.get('/:albumId', async (req, res, next) => {
       html = html.replace(
         /<link rel="manifest"[^>]*>/g,
         `<link rel="manifest" href="${manifestUrl}" />`
+      );
+      
+      // Replace title
+      html = html.replace(
+        /<title>.*?<\/title>/g,
+        `<title>${albumTitle}</title>`
+      );
+      
+      // Replace apple-mobile-web-app-title meta tag
+      html = html.replace(
+        /<meta[^>]*id="apple-mobile-web-app-title"[^>]*>/g,
+        `<meta id="apple-mobile-web-app-title" name="apple-mobile-web-app-title" content="${appTitle}" />`
       );
       
       res.set('Content-Type', 'text/html');
