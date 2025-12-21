@@ -9,6 +9,10 @@ import crypto from 'crypto';
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
 import schedule from 'node-schedule';
+import { spawn } from 'child_process';
+import ffmpeg from 'fluent-ffmpeg';
+import { installWhisperCpp, downloadWhisperModel } from '@remotion/install-whisper-cpp';
+import { OpenAI } from 'openai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,10 +25,12 @@ const CACHE_DIR = process.env.CACHE_DIR || path.join(__dirname, 'cache');
 const ALBUMS_CACHE_DIR = path.join(CACHE_DIR, 'albums');
 const IMAGES_CACHE_DIR = path.join(CACHE_DIR, 'images');
 const MAPPINGS_CACHE_DIR = path.join(CACHE_DIR, 'mappings');
+const VIDEO_AUGMENTATIONS_CACHE_DIR = path.join(CACHE_DIR, 'video-augmentations');
+const TMP_DIR = path.join(__dirname, 'tmp');
 
 // Ensure cache directories exist
 async function ensureCacheDirs() {
-  const dirs = [CACHE_DIR, ALBUMS_CACHE_DIR, IMAGES_CACHE_DIR, MAPPINGS_CACHE_DIR];
+  const dirs = [CACHE_DIR, ALBUMS_CACHE_DIR, IMAGES_CACHE_DIR, MAPPINGS_CACHE_DIR, VIDEO_AUGMENTATIONS_CACHE_DIR, TMP_DIR];
   for (const dir of dirs) {
     if (!existsSync(dir)) {
       await fs.mkdir(dir, { recursive: true });
@@ -41,6 +47,94 @@ ensureCacheDirs().catch(err => {
 // Encryption configuration
 const ENCRYPTION_SECRET = process.env.ENCRYPTION_SECRET || 'test-secret-key-change-in-production';
 const encrypt = encryptor(ENCRYPTION_SECRET);
+
+// OpenAI configuration
+const OPENAI_API_KEY = process.env.OPEN_AI_API_KEY;
+let openai;
+if (OPENAI_API_KEY) {
+  openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+}
+
+// FFmpeg configuration (optional, will use system ffmpeg if available)
+// Note: This is set up asynchronously on startup
+let ffmpegPath = null;
+let ffprobePath = null;
+
+(async function setupFFmpeg() {
+  try {
+    const pathToFfmpeg = await import('ffmpeg-static');
+    const pathToFfprobe = await import('ffprobe-static');
+    ffmpegPath = pathToFfmpeg.default;
+    // ffprobe-static exports differently - check both possibilities and ensure we get a string
+    const ffprobeRaw = pathToFfprobe.default?.ffprobePath || pathToFfprobe.ffprobePath || pathToFfprobe.default;
+    // If it's still an object, try to extract the path string
+    if (typeof ffprobeRaw === 'object' && ffprobeRaw !== null) {
+      ffprobePath = ffprobeRaw.ffprobePath || ffprobeRaw.default || null;
+    } else {
+      ffprobePath = ffprobeRaw;
+    }
+    if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
+    if (ffprobePath) ffmpeg.setFfprobePath(ffprobePath);
+    console.log('FFmpeg paths configured', { ffmpeg: ffmpegPath, ffprobe: ffprobePath });
+  } catch(e) {
+    console.warn('FFmpeg static binaries not found, using system ffmpeg:', e.message);
+  }
+})();
+
+// Whisper.cpp configuration
+// Allow custom whisper path via environment variable (e.g., if already installed)
+const WHISPER_DIR = process.env.WHISPER_DIR || path.join(__dirname, 'whisper.cpp');
+const WHISPER_MODEL = 'tiny.en';
+const WHISPER_EXE = path.join(WHISPER_DIR, 'main');
+const WHISPER_MODEL_PATH = path.join(WHISPER_DIR, `ggml-${WHISPER_MODEL}.bin`);
+let whisperInstalled = false;
+
+// Initialize Whisper.cpp (async, non-blocking) - following example pattern
+(async function() {
+  // If custom WHISPER_DIR is set, skip installation and just verify it exists
+  if (process.env.WHISPER_DIR) {
+    if (existsSync(WHISPER_EXE) && existsSync(WHISPER_MODEL_PATH)) {
+      whisperInstalled = true;
+      console.log(`Using Whisper.cpp from: ${WHISPER_DIR}`);
+      return;
+    } else {
+      console.warn(`WHISPER_DIR set to ${WHISPER_DIR} but executable or model not found`);
+      return;
+    }
+  }
+
+  try {
+    // Check if whisper.cpp already exists - if so, just download model
+    if (existsSync(WHISPER_EXE)) {
+      console.log('Whisper.cpp executable found, downloading model only...');
+      await downloadWhisperModel({
+        model: WHISPER_MODEL,
+        folder: WHISPER_DIR,
+      });
+    } else {
+      // Install from source
+      await installWhisperCpp({ to: WHISPER_DIR, version: '1.7.1' });
+      await downloadWhisperModel({
+        model: WHISPER_MODEL,
+        folder: WHISPER_DIR,
+      });
+    }
+    
+    // Verify installation
+    if (existsSync(WHISPER_EXE) && existsSync(WHISPER_MODEL_PATH)) {
+      whisperInstalled = true;
+      console.log('whisper.cpp installed locally at', WHISPER_DIR);
+    }
+  } catch(e) {
+    // If executable exists despite error, we can still use it
+    if (existsSync(WHISPER_EXE) && existsSync(WHISPER_MODEL_PATH)) {
+      whisperInstalled = true;
+      console.log('Whisper.cpp available (using existing installation)');
+    } else {
+      console.log('Whisper.cpp installation error (video transcription will be unavailable):', e.message);
+    }
+  }
+})();
 
 // Helper function to decrypt token if it's encrypted
 function decryptToken(token) {
@@ -627,6 +721,28 @@ app.get('/api/album/:token', async (req, res) => {
           (async () => {
             try {
               const freshData = await getImages(finalDecryptedToken);
+              
+              // Trigger video augmentation processing for all videos in background
+              if (freshData.photos && Array.isArray(freshData.photos)) {
+                freshData.photos.forEach(photo => {
+                  if (isVideo(photo)) {
+                    const videoUrl = getVideoUrl(photo);
+                    if (videoUrl) {
+                      // Process in background (don't await)
+                      processVideoAugmentation(finalDecryptedToken, photo.photoGuid, videoUrl)
+                        .then(augmentation => {
+                          if (augmentation) {
+                            console.log(`Background video augmentation complete for ${photo.photoGuid}`);
+                          }
+                        })
+                        .catch(err => {
+                          console.error(`Background video augmentation failed for ${photo.photoGuid}:`, err);
+                        });
+                    }
+                  }
+                });
+              }
+              
               const freshRewritten = await rewriteImageUrls(freshData, finalDecryptedToken);
               await setCachedData(cacheKey, freshRewritten, false);
               console.log(`Background reload complete for album: ${finalDecryptedToken}`);
@@ -666,6 +782,28 @@ app.get('/api/album/:token', async (req, res) => {
           try {
             console.log('Decrypted token:', finalDecryptedToken);
             const freshData = await getImages(finalDecryptedToken);
+            
+            // Trigger video augmentation processing for all videos in background
+            if (freshData.photos && Array.isArray(freshData.photos)) {
+              freshData.photos.forEach(photo => {
+                if (isVideo(photo)) {
+                  const videoUrl = getVideoUrl(photo);
+                  if (videoUrl) {
+                    // Process in background (don't await)
+                    processVideoAugmentation(finalDecryptedToken, photo.photoGuid, videoUrl)
+                      .then(augmentation => {
+                        if (augmentation) {
+                          console.log(`Background video augmentation complete for ${photo.photoGuid}`);
+                        }
+                      })
+                      .catch(err => {
+                        console.error(`Background video augmentation failed for ${photo.photoGuid}:`, err);
+                      });
+                  }
+                }
+              });
+            }
+            
             const freshRewritten = await rewriteImageUrls(freshData, finalDecryptedToken);
             await setCachedData(cacheKey, freshRewritten, false);
             console.log(`Background reload complete for album: ${finalDecryptedToken}`);
@@ -694,6 +832,27 @@ app.get('/api/album/:token', async (req, res) => {
     
     // Store original data in cache (before rewriting URLs)
     await setCachedData(cacheKey, data, false);
+    
+    // Trigger video augmentation processing for all videos in background
+    if (data.photos && Array.isArray(data.photos)) {
+      data.photos.forEach(photo => {
+        if (isVideo(photo)) {
+          const videoUrl = getVideoUrl(photo);
+          if (videoUrl) {
+            // Process in background (don't await)
+            processVideoAugmentation(finalDecryptedToken, photo.photoGuid, videoUrl)
+              .then(augmentation => {
+                if (augmentation) {
+                  console.log(`Background video augmentation complete for ${photo.photoGuid}`);
+                }
+              })
+              .catch(err => {
+                console.error(`Background video augmentation failed for ${photo.photoGuid}:`, err);
+              });
+          }
+        }
+      });
+    }
     
     // Rewrite URLs to use proxy (strip EXIF) for response
     const rewritten = await rewriteImageUrls(data, finalDecryptedToken);
@@ -736,6 +895,28 @@ function trackTokenForRefresh(decryptedToken) {
 async function refreshTokenInBackground(decryptedToken) {
   try {
     const freshData = await getImages(decryptedToken);
+    
+    // Trigger video augmentation processing for all videos in background
+    if (freshData.photos && Array.isArray(freshData.photos)) {
+      freshData.photos.forEach(photo => {
+        if (isVideo(photo)) {
+          const videoUrl = getVideoUrl(photo);
+          if (videoUrl) {
+            // Process in background (don't await)
+            processVideoAugmentation(decryptedToken, photo.photoGuid, videoUrl)
+              .then(augmentation => {
+                if (augmentation) {
+                  console.log(`Background video augmentation complete for ${photo.photoGuid}`);
+                }
+              })
+              .catch(err => {
+                console.error(`Background video augmentation failed for ${photo.photoGuid}:`, err);
+              });
+          }
+        }
+      });
+    }
+    
     const freshRewritten = await rewriteImageUrls(freshData, decryptedToken);
     await setCachedData(decryptedToken, freshRewritten, false);
     console.log(`Background refresh complete for album: ${decryptedToken}`);
@@ -809,6 +990,379 @@ app.use(express.static(path.join(__dirname, 'public'), {
     }
   }
 }));
+
+// ============================================
+// VIDEO AUGMENTATION PIPELINE
+// ============================================
+
+// Helper function to check if a photo is a video
+function isVideo(photo) {
+  return photo.mediaAssetType === 'video' || 
+         (photo.derivatives && Object.values(photo.derivatives).some(d => 
+           d && d.url && d.url.toLowerCase().includes('.mp4')));
+}
+
+// Helper function to get video URL from photo
+function getVideoUrl(photo) {
+  if (!photo || !photo.derivatives) return null;
+  
+  // Get the largest available video
+  const videoSizes = Object.keys(photo.derivatives)
+    .filter(size => {
+      const derivative = photo.derivatives[size];
+      return derivative && derivative.url && derivative.url.toLowerCase().includes('.mp4');
+    })
+    .map(Number)
+    .sort((a, b) => b - a);
+  
+  if (videoSizes.length > 0) {
+    return photo.derivatives[videoSizes[0].toString()].url;
+  }
+  return null;
+}
+
+// Helper function to get video duration using ffprobe
+async function getVideoDuration(videoUrl) {
+  if (!ffprobePath) {
+    console.warn('ffprobe not available, cannot get video duration');
+    return null;
+  }
+  
+  try {
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execAsync = promisify(exec);
+    
+    // Ensure ffprobePath is a string (handle object exports)
+    let ffprobeExecutable = ffprobePath;
+    if (typeof ffprobePath === 'object' && ffprobePath.ffprobePath) {
+      ffprobeExecutable = ffprobePath.ffprobePath;
+    } else if (typeof ffprobePath === 'object' && ffprobePath.default) {
+      ffprobeExecutable = typeof ffprobePath.default === 'string' ? ffprobePath.default : ffprobePath.default.ffprobePath;
+    }
+    
+    if (!ffprobeExecutable || typeof ffprobeExecutable !== 'string') {
+      console.warn('ffprobe path is not a valid string:', ffprobePath);
+      return null;
+    }
+    
+    // Use ffprobe to get duration
+    const { stdout } = await execAsync(`"${ffprobeExecutable}" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoUrl}"`);
+    const duration = parseFloat(stdout.trim());
+    
+    if (isNaN(duration) || duration <= 0) {
+      console.warn(`Invalid duration from ffprobe for ${videoUrl}: ${stdout.trim()}`);
+      return null;
+    }
+    
+    return Math.floor(duration); // Return duration in seconds as integer
+  } catch (e) {
+    console.warn(`Could not get video duration using ffprobe for ${videoUrl}:`, e.message);
+    return null;
+  }
+}
+
+// Extract audio from video using ffmpeg
+async function extractAudioFromVideo(videoUrl, outputPath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg(videoUrl)
+      .noVideo()
+      .audioCodec('pcm_s16le')
+      .audioFrequency(16000) // Whisper requires 16kHz
+      .audioChannels(1) // Mono
+      .format('wav')
+      .on('start', (cmd) => {
+        console.log('Extracting audio with ffmpeg:', cmd);
+      })
+      .on('error', (err) => {
+        console.error('FFmpeg error:', err);
+        reject(err);
+      })
+      .on('end', () => {
+        console.log('Audio extraction complete');
+        resolve(outputPath);
+      })
+      .save(outputPath);
+  });
+}
+
+// Transcribe audio using whisper.cpp
+async function transcribeAudio(audioPath) {
+  if (!whisperInstalled) {
+    throw new Error('Whisper.cpp is not installed');
+  }
+
+  return new Promise((resolve, reject) => {
+    let transcription = '';
+    let timestamps = [];
+    let currentLength = 0;
+    let points = [];
+
+    // Use absolute paths for whisper executable and model
+    if (!existsSync(WHISPER_EXE)) {
+      throw new Error(`Whisper executable not found at ${WHISPER_EXE}`);
+    }
+    if (!existsSync(WHISPER_MODEL_PATH)) {
+      throw new Error(`Whisper model not found at ${WHISPER_MODEL_PATH}`);
+    }
+    
+    const whisper = spawn(WHISPER_EXE, [
+      '-m', WHISPER_MODEL_PATH,
+      '-f', audioPath,
+      '--output-txt',
+      '--output-words'
+    ], { 
+      shell: false,
+      cwd: __dirname 
+    });
+
+    whisper.stdout.on('data', (data) => {
+      let lines = data.toString().split('\n');
+      lines.forEach(line => {
+        if (line.includes('[')) {
+          let parts = line.split(']');
+          if (parts.length >= 2) {
+            if (parts.length > 2) {
+              parts = [parts[0], parts.slice(1).join(']')];
+            }
+
+            let timeRaw = parts[0].replace('[', '').split('-->')[0].trim();
+            let word = parts[1]?.trim();
+            if (!word) return;
+
+            let [hrs, mins, secs] = timeRaw.split(':');
+            hrs = parseInt(hrs) || 0;
+            mins = parseInt(mins) || 0;
+            secs = parseFloat(secs) || 0;
+
+            let ms = Math.floor((hrs * 3600 + mins * 60 + secs) * 1000);
+
+            transcription += word + ' ';
+            timestamps.push(ms);
+            points.push(currentLength);
+            currentLength = transcription.length;
+          }
+        }
+      });
+    });
+
+    whisper.on('close', (code) => {
+      if (code === 0) {
+        transcription = transcription.trim();
+        resolve({ transcription, timestamps, points });
+      } else {
+        reject(new Error(`Whisper process exited with code ${code}`));
+      }
+    });
+
+    whisper.on('error', (err) => {
+      reject(err);
+    });
+  });
+}
+
+// Blogify transcription using OpenAI GPT-4o
+async function blogifyTranscription(transcription) {
+  if (!openai) {
+    throw new Error('OpenAI API key not configured');
+  }
+
+  const prompt = `I have an audio blog post transcript. Format it as a Markdown blog post with headlines and rich formatting. Use the provided similarity percentage as a guide for how closely to stick to the original text.
+
+Assume medium quality transcription, you're allowed to correct obvious errors. It may have been run through a rudimentary punctuator.
+
+- At 75% similarity, prioritize clarity, structure, and readability, allowing significant rephrasing and reorganization.
+- At 90% similarity, retain most of the original phrasing and structure, making only moderate adjustments for flow and readability.
+- At 95% similarity, keep very close to the original text, making only minor edits to fix glaring issues while focusing primarily on formatting.
+
+Respond only the final markdown. No ticks surrounding it or any commentary about the task. This will be fed straight into a markdown parser and will throw an error if you deviate from this instruction.
+
+Please use the following similarity value for this request: 89.`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      temperature: 0.888,
+      messages: [
+        { role: 'system', content: prompt },
+        { role: 'user', content: `transcript: ${transcription}` }
+      ]
+    });
+
+    return response.choices[0].message.content.trim();
+  } catch (error) {
+    console.error('OpenAI blogify error:', error);
+    throw error;
+  }
+}
+
+// Process video augmentation: extract audio, transcribe, blogify
+async function processVideoAugmentation(albumToken, photoGuid, videoUrl) {
+  const cacheKey = `${albumToken}_${photoGuid}`;
+  const cacheFile = path.join(VIDEO_AUGMENTATIONS_CACHE_DIR, `${cacheKey}.json`);
+
+  // Check if already cached
+  if (existsSync(cacheFile)) {
+    try {
+      const cached = await fs.readFile(cacheFile, 'utf-8');
+      return JSON.parse(cached);
+    } catch (e) {
+      console.warn('Error reading cached augmentation, reprocessing...', e);
+    }
+  }
+
+  // Check video duration and skip if too short (< 10 seconds)
+  const duration = await getVideoDuration(videoUrl);
+  if (duration !== null && duration < 10) {
+    console.log(`Skipping video ${photoGuid}: too short (${duration}s)`);
+    // Cache the skipped state so we don't try again
+    const skippedAugmentation = {
+      photoGuid,
+      albumToken,
+      skipped: true,
+      reason: 'too_short',
+      duration,
+      processedAt: new Date().toISOString()
+    };
+    await fs.writeFile(cacheFile, JSON.stringify(skippedAugmentation, null, 2), 'utf-8');
+    return skippedAugmentation;
+  }
+
+  try {
+    // Step 1: Extract audio
+    const audioFilename = `${cacheKey}.wav`;
+    const audioPath = path.join(TMP_DIR, audioFilename);
+    
+    console.log(`Extracting audio from video: ${photoGuid}`);
+    await extractAudioFromVideo(videoUrl, audioPath);
+
+    // Step 2: Transcribe
+    console.log(`Transcribing audio: ${photoGuid}`);
+    const { transcription, timestamps, points } = await transcribeAudio(audioPath);
+
+    // Skip if transcription is too short or empty
+    if (!transcription || transcription.trim().length < 50) {
+      console.log(`Skipping video ${photoGuid}: transcription too short (${transcription?.length || 0} chars)`);
+      // Clean up
+      await fs.unlink(audioPath).catch(() => {});
+      // Cache the skipped state
+      const skippedAugmentation = {
+        photoGuid,
+        albumToken,
+        skipped: true,
+        reason: 'transcription_too_short',
+        transcriptionLength: transcription?.length || 0,
+        processedAt: new Date().toISOString()
+      };
+      await fs.writeFile(cacheFile, JSON.stringify(skippedAugmentation, null, 2), 'utf-8');
+      return skippedAugmentation;
+    }
+
+    // Step 3: Blogify
+    console.log(`Blogifying transcription: ${photoGuid}`);
+    const blog = await blogifyTranscription(transcription);
+
+    // Create augmentation object
+    const augmentation = {
+      photoGuid,
+      albumToken,
+      transcription,
+      blog,
+      timestamps,
+      points,
+      processedAt: new Date().toISOString()
+    };
+
+    // Save to cache
+    await fs.writeFile(cacheFile, JSON.stringify(augmentation, null, 2), 'utf-8');
+
+    // Clean up temporary audio file
+    await fs.unlink(audioPath).catch(() => {});
+
+    console.log(`Video augmentation complete for ${photoGuid}`);
+    return augmentation;
+
+  } catch (error) {
+    console.error(`Error processing video augmentation for ${photoGuid}:`, error);
+    throw error;
+  }
+}
+
+// Route to get video augmentation (with optional processing)
+app.get('/api/video-augmentation/:albumToken/:photoGuid', async (req, res) => {
+  try {
+    const { albumToken, photoGuid } = req.params;
+    const { process } = req.query; // Optional: ?process=true to trigger processing
+
+    // Decrypt token if needed
+    let decryptedToken;
+    try {
+      decryptedToken = decryptToken(albumToken);
+    } catch (error) {
+      return res.status(400).json({ error: 'Invalid token' });
+    }
+
+    const cacheKey = `${decryptedToken}_${photoGuid}`;
+    const cacheFile = path.join(VIDEO_AUGMENTATIONS_CACHE_DIR, `${cacheKey}.json`);
+
+    // Check cache first
+    if (existsSync(cacheFile)) {
+      try {
+        const cached = await fs.readFile(cacheFile, 'utf-8');
+        const cachedData = JSON.parse(cached);
+        // Return cached data (including skipped state)
+        return res.json(cachedData);
+      } catch (e) {
+        console.error('Error reading cached augmentation:', e);
+      }
+    }
+
+    // If not cached, automatically trigger processing in background
+    // (Don't require ?process=true - just do it automatically)
+    try {
+      // Get album data to find the video
+      const albumData = await getImages(decryptedToken);
+      const photo = albumData.photos?.find(p => p.photoGuid === photoGuid);
+
+      if (!photo || !isVideo(photo)) {
+        return res.status(404).json({ error: 'Video not found' });
+      }
+
+      const videoUrl = getVideoUrl(photo);
+      if (!videoUrl) {
+        return res.status(404).json({ error: 'Video URL not found' });
+      }
+
+      // Process in background (don't await)
+      processVideoAugmentation(decryptedToken, photoGuid, videoUrl)
+        .then(augmentation => {
+          if (augmentation) {
+            console.log(`Background processing complete for ${photoGuid}`);
+          }
+        })
+        .catch(err => {
+          console.error(`Background processing failed for ${photoGuid}:`, err);
+        });
+
+      // Return processing status immediately
+      return res.json({ 
+        status: 'processing', 
+        message: 'Video augmentation is being processed in the background. Check back in a few moments.' 
+      });
+    } catch (error) {
+      console.error(`Error starting video augmentation processing for ${photoGuid}:`, error);
+      // Return processing status even on error (processing will retry on next request)
+      return res.json({ 
+        status: 'processing', 
+        message: 'Video augmentation processing will start shortly.' 
+      });
+    }
+
+  } catch (error) {
+    console.error('Error in video augmentation endpoint:', error);
+    res.status(500).json({ error: 'Internal server error', message: error.message });
+  }
+});
 
 // Serve feed.html for feed routes (/feed/:token)
 app.get('/feed/:token', (req, res, next) => {

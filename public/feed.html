@@ -119,6 +119,7 @@
 
     /* Vlog Post Card */
     .vlog-post {
+      position: relative;
       background: white;
       border-radius: 12px;
       overflow: hidden;
@@ -179,6 +180,7 @@
       margin-bottom: 16px;
       display: -webkit-box;
       -webkit-line-clamp: 3;
+      line-clamp: 3;
       -webkit-box-orient: vertical;
       overflow: hidden;
     }
@@ -207,6 +209,30 @@
       display: flex;
       align-items: center;
       gap: 6px;
+    }
+
+    .vlog-post {
+      position: relative;
+    }
+
+    .vlog-post.processing {
+      opacity: 0.7;
+    }
+
+    .vlog-post.processing::after {
+      content: 'Processing...';
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+    }
+
+    .vlog-post.has-augmentation {
+      border-left: 3px solid #4CAF50;
     }
 
     /* Lightbox for photos */
@@ -425,6 +451,75 @@
       margin-bottom: 0;
     }
 
+    .vlog-lightbox-post h1,
+    .vlog-lightbox-post h2,
+    .vlog-lightbox-post h3,
+    .vlog-lightbox-post h4,
+    .vlog-lightbox-post h5,
+    .vlog-lightbox-post h6 {
+      margin-top: 24px;
+      margin-bottom: 16px;
+      font-weight: 600;
+      line-height: 1.3;
+    }
+
+    .vlog-lightbox-post h1:first-child,
+    .vlog-lightbox-post h2:first-child,
+    .vlog-lightbox-post h3:first-child {
+      margin-top: 0;
+    }
+
+    .vlog-lightbox-post ul,
+    .vlog-lightbox-post ol {
+      margin: 16px 0;
+      padding-left: 24px;
+    }
+
+    .vlog-lightbox-post li {
+      margin-bottom: 8px;
+    }
+
+    .vlog-lightbox-post strong {
+      font-weight: 600;
+    }
+
+    .vlog-lightbox-post em {
+      font-style: italic;
+    }
+
+    .vlog-lightbox-post code {
+      background: rgba(255, 255, 255, 0.1);
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Monaco', 'Courier New', monospace;
+      font-size: 0.9em;
+    }
+
+    .vlog-lightbox-post pre {
+      background: rgba(255, 255, 255, 0.1);
+      padding: 16px;
+      border-radius: 6px;
+      overflow-x: auto;
+      margin: 16px 0;
+    }
+
+    .vlog-lightbox-post pre code {
+      background: none;
+      padding: 0;
+    }
+
+    .vlog-lightbox-post blockquote {
+      border-left: 3px solid rgba(255, 255, 255, 0.3);
+      padding-left: 16px;
+      margin: 16px 0;
+      color: rgba(255, 255, 255, 0.7);
+    }
+
+    .vlog-lightbox-post a {
+      color: rgba(255, 255, 255, 0.9);
+      text-decoration: underline;
+    }
+
     @media (max-width: 768px) {
       .vlog-lightbox {
         padding: 20px 12px;
@@ -490,16 +585,18 @@
     </div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/marked@11/marked.min.js"></script>
   <script>
     let items = []; // Mixed array of photos and videos, sorted by date
     let photoItems = []; // Just photos (for lightbox navigation)
     let currentPhotoIndex = 0;
     let touchStartX = 0;
     let touchEndX = 0;
+    let token = ''; // Album token from URL
 
     // Get token from URL path (e.g., /feed/B1v532ODWVjCzg)
     const pathParts = window.location.pathname.split('/').filter(Boolean);
-    const token = pathParts[1] || pathParts[pathParts.length - 1]; // Get token after /feed/
+    token = pathParts[1] || pathParts[pathParts.length - 1]; // Get token after /feed/
 
     if (!token) {
       document.getElementById('error').textContent = 'No album token provided. Access via /feed/:token';
@@ -544,6 +641,17 @@
           document.getElementById('feed-subtitle').textContent = `${items.length} post${items.length !== 1 ? 's' : ''}`;
         }
 
+        // Pre-fetch augmentation status for all videos before rendering
+        // This ensures we know which videos are skipped/augmented before we render
+        // Use a timeout to avoid blocking on slow processing requests
+        const videoItems = allItems.filter(item => isVideo(item));
+        await Promise.all(videoItems.map(item => 
+          Promise.race([
+            fetchVideoAugmentation(token, item.photoGuid, false).catch(() => null),
+            new Promise(resolve => setTimeout(() => resolve(null), 2000)) // 2 second timeout
+          ])
+        ));
+
         renderFeed();
         document.getElementById('loading').style.display = 'none';
         document.getElementById('feed').style.display = 'block';
@@ -565,52 +673,59 @@
         return null;
       }
       
+      // Helper to extract numeric size from key (handles "1280-1" -> 1280)
+      function extractSize(key) {
+        const match = key.toString().match(/^(\d+)/);
+        return match ? parseInt(match[1], 10) : 0;
+      }
+      
       if (isVideo(item)) {
         // For videos, prefer JPG thumbnails (both original iCloud URLs and rewritten proxy URLs)
         const jpgDerivatives = Object.keys(item.derivatives)
-          .filter(size => {
-            const derivative = item.derivatives[size];
+          .filter(key => {
+            const derivative = item.derivatives[key];
             if (!derivative || !derivative.url) return false;
             const url = derivative.url.toLowerCase();
             // Check for JPG files or rewritten proxy URLs (which always end in .jpg)
             return (url.includes('.jpg') || url.startsWith('/api/image/')) &&
                    !url.includes('.mp4');
           })
-          .map(Number)
-          .sort((a, b) => a - b);
+          .map(key => ({ key, size: extractSize(key) }))
+          .sort((a, b) => a.size - b.size);
         
         if (jpgDerivatives.length > 0) {
-          const preferred = jpgDerivatives.find(s => s >= 257) || jpgDerivatives[0];
-          const result = item.derivatives[preferred.toString()];
+          const preferred = jpgDerivatives.find(d => d.size >= 257) || jpgDerivatives[0];
+          const result = item.derivatives[preferred.key];
           if (result && result.url) return result;
         }
+        
         // Fallback: any non-video derivative (could be rewritten thumbnail or original JPG)
         const nonVideoDerivatives = Object.keys(item.derivatives)
-          .filter(size => {
-            const derivative = item.derivatives[size];
+          .filter(key => {
+            const derivative = item.derivatives[key];
             if (!derivative || !derivative.url) return false;
             const url = derivative.url.toLowerCase();
             return !url.includes('.mp4');
           })
-          .map(Number)
-          .sort((a, b) => a - b);
+          .map(key => ({ key, size: extractSize(key) }))
+          .sort((a, b) => a.size - b.size);
         
         if (nonVideoDerivatives.length > 0) {
-          const result = item.derivatives[nonVideoDerivatives[0].toString()];
+          const result = item.derivatives[nonVideoDerivatives[0].key];
           if (result && result.url) return result;
         }
       }
       
       // For photos, prefer 257, then 333, then smallest available
       const sizes = Object.keys(item.derivatives)
-        .filter(size => {
-          const derivative = item.derivatives[size];
+        .filter(key => {
+          const derivative = item.derivatives[key];
           if (!derivative || !derivative.url) return false;
           const url = derivative.url.toLowerCase();
           return !url.includes('.mp4');
         })
-        .map(Number)
-        .sort((a, b) => a - b);
+        .map(key => ({ key, size: extractSize(key) }))
+        .sort((a, b) => a.size - b.size);
       
       if (sizes.length === 0) {
         // Last resort: return any derivative with a URL
@@ -618,22 +733,28 @@
         return anyDerivative || null;
       }
       
-      const preferred = sizes.find(s => s >= 257) || sizes[0];
-      const result = item.derivatives[preferred.toString()];
+      const preferred = sizes.find(d => d.size >= 257) || sizes[0];
+      const result = item.derivatives[preferred.key];
       return (result && result.url) ? result : null;
     }
 
     function getBestVideo(item) {
+      // Helper to extract numeric size from key (handles "1280-1" -> 1280)
+      function extractSize(key) {
+        const match = key.toString().match(/^(\d+)/);
+        return match ? parseInt(match[1], 10) : 0;
+      }
+      
       const videoSizes = Object.keys(item.derivatives)
-        .filter(size => {
-          const derivative = item.derivatives[size];
-          return derivative.url && derivative.url.includes('.mp4');
+        .filter(key => {
+          const derivative = item.derivatives[key];
+          return derivative && derivative.url && derivative.url.toLowerCase().includes('.mp4');
         })
-        .map(Number)
-        .sort((a, b) => b - a);
+        .map(key => ({ key, size: extractSize(key) }))
+        .sort((a, b) => b.size - a.size);
       
       if (videoSizes.length > 0) {
-        return item.derivatives[videoSizes[0].toString()];
+        return item.derivatives[videoSizes[0].key];
       }
       return null;
     }
@@ -658,13 +779,98 @@
       });
     }
 
-    // Generate placeholder content for vlog posts
-    function generateVlogContent(item) {
-      // For now, use placeholder content
-      // Later this will come from AI transcription/LLM
+    // Cache for video augmentations
+    const videoAugmentations = new Map();
+
+    // Fetch video augmentation from API
+    async function fetchVideoAugmentation(albumToken, photoGuid, forceProcess = false) {
+      const cacheKey = `${albumToken}_${photoGuid}`;
+      
+      // Check cache first
+      if (videoAugmentations.has(cacheKey) && !forceProcess) {
+        return videoAugmentations.get(cacheKey);
+      }
+
+      try {
+        const url = `/api/video-augmentation/${encodeURIComponent(albumToken)}/${encodeURIComponent(photoGuid)}${forceProcess ? '?process=true' : ''}`;
+        
+        // Add AbortController for timeout on slow requests
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+        
+        const response = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+          if (response.status === 404) {
+            // Not found - don't trigger processing during pre-fetch, just return null
+            // Processing will happen automatically when albums are fetched
+            return null;
+          }
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        
+        // If processing in background, return null (will show placeholder)
+        if (data.status === 'processing') {
+          console.log(`Video augmentation processing for ${photoGuid}`);
+          return null;
+        }
+
+        // Cache the result (including skipped state)
+        if (data.skipped || data.transcription || data.blog) {
+          videoAugmentations.set(cacheKey, data);
+          return data;
+        }
+
+        return null;
+      } catch (error) {
+        // Handle timeout or other errors gracefully
+        if (error.name === 'AbortError') {
+          console.log(`Video augmentation fetch timeout for ${photoGuid}, will render as regular video`);
+        } else {
+          console.error(`Error fetching video augmentation for ${photoGuid}:`, error);
+        }
+        return null;
+      }
+    }
+
+    // Generate content for vlog posts (with augmentation if available)
+    async function generateVlogContent(item, albumToken) {
+      // Try to get augmentation
+      const augmentation = await fetchVideoAugmentation(albumToken, item.photoGuid);
+      
+      // Check if video was skipped (too short, etc.)
+      if (augmentation && augmentation.skipped) {
+        // Video was skipped - return null to indicate it should be treated as a regular video
+        return null;
+      }
+      
+      if (augmentation && augmentation.blog) {
+        // Use actual blog content
+        return {
+          title: augmentation.blog.split('\n')[0].replace(/^#+\s*/, '') || `Vlog Entry - ${formatDateShort(item.dateCreated)}`,
+          text: augmentation.blog,
+          transcription: augmentation.transcription,
+          hasAugmentation: true
+        };
+      } else if (augmentation && augmentation.transcription) {
+        // Use transcription if blog not available
+        return {
+          title: `Vlog Entry - ${formatDateShort(item.dateCreated)}`,
+          text: augmentation.transcription,
+          transcription: augmentation.transcription,
+          hasAugmentation: true
+        };
+      }
+
+      // Fallback to placeholder
       return {
         title: `Vlog Entry - ${formatDateShort(item.dateCreated)}`,
-        text: `This is placeholder content for a vlog post. In the future, this will be generated from video transcription and processed by an LLM to create a markdown blog post. The video was created on ${formatDate(item.dateCreated)}.`
+        text: `Processing video transcription... This may take a few moments. Click to view video.`,
+        hasAugmentation: false,
+        processing: true
       };
     }
 
@@ -674,62 +880,154 @@
 
       let currentPhotoGrid = null;
 
+      // Render all items - we already know augmentation status from pre-fetch
       items.forEach((item, index) => {
         if (isVideo(item)) {
-          // Close current photo grid if open
-          if (currentPhotoGrid) {
-            feed.appendChild(currentPhotoGrid);
-            currentPhotoGrid = null;
+          // Check augmentation status (already fetched before rendering)
+          const cacheKey = `${token}_${item.photoGuid}`;
+          const cachedAugmentation = videoAugmentations.get(cacheKey);
+          
+          // If video was skipped OR has no augmentation, treat it as a regular photo
+          // (render in photo grid, not as vlog post)
+          if (cachedAugmentation && cachedAugmentation.skipped) {
+            // Treat as photo - add to current grid or create new grid
+            if (!currentPhotoGrid) {
+              currentPhotoGrid = document.createElement('div');
+              currentPhotoGrid.className = 'photo-grid';
+            }
+
+            const thumbnail = getBestThumbnail(item);
+            const photoItem = document.createElement('div');
+            photoItem.className = 'photo-item';
+            photoItem.dataset.itemIndex = index;
+
+            if (thumbnail && thumbnail.url) {
+              const img = document.createElement('img');
+              img.src = thumbnail.url;
+              img.alt = '';
+              img.loading = 'lazy';
+              photoItem.appendChild(img);
+            } else {
+              // No thumbnail found - create a placeholder
+              console.warn('Skipped video (no thumbnail) for photo grid:', item.photoGuid);
+              console.warn('Available derivatives:', Object.keys(item.derivatives || {}));
+              const placeholder = document.createElement('div');
+              placeholder.style.cssText = 'width: 100%; aspect-ratio: 1; background: #333; display: flex; align-items: center; justify-content: center; color: #999; font-size: 14px;';
+              placeholder.textContent = 'Video';
+              photoItem.appendChild(placeholder);
+            }
+
+            photoItem.addEventListener('click', () => openVideoLightbox(index));
+            currentPhotoGrid.appendChild(photoItem);
+            return; // Skip vlog post creation
           }
+          
+          // Video has augmentation (blog/transcription) - render as vlog post
+          // Only render vlog posts for videos that have augmentations
+          if (cachedAugmentation && (cachedAugmentation.blog || cachedAugmentation.transcription)) {
+            // Close current photo grid if open
+            if (currentPhotoGrid) {
+              feed.appendChild(currentPhotoGrid);
+              currentPhotoGrid = null;
+            }
 
-          // Create vlog post card
-          const vlogPost = document.createElement('div');
-          vlogPost.className = 'vlog-post';
-          vlogPost.dataset.itemIndex = index;
+            // Create vlog post card with actual content
+            const vlogPost = document.createElement('div');
+            vlogPost.className = 'vlog-post';
+            vlogPost.dataset.itemIndex = index;
+            vlogPost.id = `vlog-post-${index}`;
 
-          const thumbnail = getBestThumbnail(item);
-          const vlogContent = generateVlogContent(item);
+            const thumbnail = getBestThumbnail(item);
+            if (thumbnail && thumbnail.url) {
+              const thumbImg = document.createElement('img');
+              thumbImg.src = thumbnail.url;
+              thumbImg.className = 'vlog-thumbnail';
+              thumbImg.alt = '';
+              thumbImg.onerror = function() {
+                console.error('Failed to load video thumbnail:', thumbnail.url, item);
+                this.style.display = 'none';
+              };
+              vlogPost.appendChild(thumbImg);
+            }
 
-          if (thumbnail && thumbnail.url) {
-            const thumbImg = document.createElement('img');
-            thumbImg.src = thumbnail.url;
-            thumbImg.className = 'vlog-thumbnail';
-            thumbImg.alt = '';
-            thumbImg.onerror = function() {
-              console.error('Failed to load video thumbnail:', thumbnail.url, item);
-              this.style.display = 'none';
-            };
-            vlogPost.appendChild(thumbImg);
+            const content = document.createElement('div');
+            content.className = 'vlog-content';
+
+            const title = document.createElement('h2');
+            title.className = 'vlog-title';
+            
+            const textPreview = document.createElement('div');
+            textPreview.className = 'vlog-text-preview';
+            
+            if (cachedAugmentation.blog) {
+              // Use actual blog content
+              const titleText = cachedAugmentation.blog.split('\n')[0].replace(/^#+\s*/, '') || `Vlog Entry - ${formatDateShort(item.dateCreated)}`;
+              title.textContent = titleText;
+              
+              // Extract first paragraph as preview
+              const preview = cachedAugmentation.blog
+                .split('\n\n')[0]
+                .replace(/^#+\s*/, '')
+                .substring(0, 200);
+              textPreview.textContent = preview + (preview.length >= 200 ? '...' : '');
+              
+              vlogPost.classList.add('has-augmentation');
+            } else if (cachedAugmentation.transcription) {
+              // Use transcription
+              title.textContent = `Vlog Entry - ${formatDateShort(item.dateCreated)}`;
+              const preview = cachedAugmentation.transcription.substring(0, 200);
+              textPreview.textContent = preview + (preview.length >= 200 ? '...' : '');
+              vlogPost.classList.add('has-augmentation');
+            }
+            
+            content.appendChild(title);
+            content.appendChild(textPreview);
+
+            const meta = document.createElement('div');
+            meta.className = 'vlog-meta';
+            const date = document.createElement('div');
+            date.className = 'vlog-date';
+            date.textContent = formatDate(item.dateCreated);
+            meta.appendChild(date);
+            content.appendChild(meta);
+            vlogPost.appendChild(content);
+
+            vlogPost.addEventListener('click', () => openVlogLightbox(index));
+            feed.appendChild(vlogPost);
           } else {
-            console.warn('No thumbnail found for video item:', item);
+            // Video has no augmentation (skipped, processing, or not processed) - treat as regular video in photo grid
+            if (!currentPhotoGrid) {
+              currentPhotoGrid = document.createElement('div');
+              currentPhotoGrid.className = 'photo-grid';
+            }
+
+            const thumbnail = getBestThumbnail(item);
+            const photoItem = document.createElement('div');
+            photoItem.className = 'photo-item';
+            photoItem.dataset.itemIndex = index;
+
+            if (thumbnail && thumbnail.url) {
+              const img = document.createElement('img');
+              img.src = thumbnail.url;
+              img.alt = '';
+              img.loading = 'lazy';
+              photoItem.appendChild(img);
+            } else {
+              // No thumbnail found - create a placeholder
+              const placeholder = document.createElement('div');
+              placeholder.style.cssText = 'width: 100%; aspect-ratio: 1; background: #333; display: flex; align-items: center; justify-content: center; color: #999; font-size: 14px;';
+              placeholder.textContent = 'Video';
+              photoItem.appendChild(placeholder);
+            }
+
+            photoItem.addEventListener('click', () => openVideoLightbox(index));
+            currentPhotoGrid.appendChild(photoItem);
+            
+            // Still load augmentation in background in case it finishes processing
+            if (!cachedAugmentation || cachedAugmentation.status === 'processing') {
+              loadVideoAugmentation(index, item, token, null);
+            }
           }
-
-          const content = document.createElement('div');
-          content.className = 'vlog-content';
-
-          const title = document.createElement('h2');
-          title.className = 'vlog-title';
-          title.textContent = vlogContent.title;
-          content.appendChild(title);
-
-          const textPreview = document.createElement('div');
-          textPreview.className = 'vlog-text-preview';
-          textPreview.textContent = vlogContent.text;
-          content.appendChild(textPreview);
-
-          const meta = document.createElement('div');
-          meta.className = 'vlog-meta';
-
-          const date = document.createElement('div');
-          date.className = 'vlog-date';
-          date.textContent = formatDate(item.dateCreated);
-          meta.appendChild(date);
-
-          content.appendChild(meta);
-          vlogPost.appendChild(content);
-
-          vlogPost.addEventListener('click', () => openVlogLightbox(index));
-          feed.appendChild(vlogPost);
         } else {
           // Photo - add to current grid or create new grid
           if (!currentPhotoGrid) {
@@ -763,9 +1061,49 @@
       }
     }
 
+    function openVideoLightbox(itemIndex) {
+      const item = items[itemIndex];
+      if (!item || !isVideo(item)) return;
+
+      const video = getBestVideo(item);
+      if (!video || !video.url) return;
+
+      const lightbox = document.getElementById('lightbox');
+      const lightboxImage = document.getElementById('lightbox-image');
+      const lightboxVideo = document.getElementById('lightbox-video');
+      const lightboxInfo = document.getElementById('lightbox-info');
+
+      // Hide image, show video
+      lightboxImage.style.display = 'none';
+      lightboxVideo.src = video.url;
+      lightboxVideo.style.display = 'block';
+
+      const caption = item.caption || '';
+      const date = formatDate(item.dateCreated);
+      lightboxInfo.innerHTML = caption 
+        ? `<div>${caption}</div><div style="margin-top: 4px; opacity: 0.8; font-size: 12px;">${date}</div>`
+        : `<div>${date}</div>`;
+
+      lightbox.classList.add('active');
+    }
+
     function openPhotoLightbox(itemIndex) {
       const item = items[itemIndex];
-      if (!item || isVideo(item)) return;
+      if (!item) return;
+
+      // Handle videos - open video lightbox for skipped videos (regular videos should use vlog lightbox)
+      if (isVideo(item)) {
+        const cacheKey = `${token}_${item.photoGuid}`;
+        const cachedAugmentation = videoAugmentations.get(cacheKey);
+        // If video is skipped, open in regular video lightbox (treat as regular video)
+        if (cachedAugmentation && cachedAugmentation.skipped) {
+          openVideoLightbox(itemIndex);
+        } else {
+          // Regular video with augmentation - use vlog lightbox
+          openVlogLightbox(itemIndex);
+        }
+        return;
+      }
 
       // Find index in photoItems array
       currentPhotoIndex = photoItems.findIndex(photo => photo === item);
@@ -790,7 +1128,50 @@
       lightbox.classList.add('active');
     }
 
-    function openVlogLightbox(itemIndex) {
+    // Load video augmentation asynchronously and update the UI
+    // This is called after initial render for videos that are still processing
+    async function loadVideoAugmentation(index, item, albumToken, vlogPostElement) {
+      try {
+        const augmentation = await fetchVideoAugmentation(albumToken, item.photoGuid, false);
+        
+        // If video was skipped or has no augmentation, it's already rendered as a photo item
+        // No action needed - it's already in the photo grid
+        
+        // If video now has augmentation and was rendered as a photo, we'd need to convert it
+        // But for now, we'll leave it as-is since it's rare for processing to complete
+        // during a page session. The next page load will render it correctly.
+        
+        if (augmentation && (augmentation.blog || augmentation.transcription) && vlogPostElement) {
+          // Update existing vlog post with new content
+          const titleElement = vlogPostElement.querySelector('.vlog-title');
+          const textPreviewElement = vlogPostElement.querySelector('.vlog-text-preview');
+          
+          if (titleElement && textPreviewElement) {
+            if (augmentation.blog) {
+              const titleText = augmentation.blog.split('\n')[0].replace(/^#+\s*/, '') || `Vlog Entry - ${formatDateShort(item.dateCreated)}`;
+              titleElement.textContent = titleText;
+              const preview = augmentation.blog
+                .split('\n\n')[0]
+                .replace(/^#+\s*/, '')
+                .substring(0, 200);
+              textPreviewElement.textContent = preview + (preview.length >= 200 ? '...' : '');
+              vlogPostElement.classList.remove('processing');
+              vlogPostElement.classList.add('has-augmentation');
+            } else if (augmentation.transcription) {
+              titleElement.textContent = `Vlog Entry - ${formatDateShort(item.dateCreated)}`;
+              const preview = augmentation.transcription.substring(0, 200);
+              textPreviewElement.textContent = preview + (preview.length >= 200 ? '...' : '');
+              vlogPostElement.classList.remove('processing');
+              vlogPostElement.classList.add('has-augmentation');
+            }
+          }
+        }
+      } catch (error) {
+        console.error(`Error loading augmentation for video ${index}:`, error);
+      }
+    }
+
+    async function openVlogLightbox(itemIndex) {
       const item = items[itemIndex];
       if (!item || !isVideo(item)) return;
 
@@ -803,14 +1184,40 @@
       const vlogDate = document.getElementById('vlog-lightbox-date');
       const vlogPost = document.getElementById('vlog-lightbox-post');
 
-      const vlogContent = generateVlogContent(item);
+      const vlogContent = await generateVlogContent(item, token);
 
       vlogVideo.src = video.url;
       vlogTitle.textContent = vlogContent.title;
       vlogDate.textContent = formatDate(item.dateCreated);
       
-      // Convert placeholder text to HTML (simple version, later will be markdown)
-      vlogPost.innerHTML = `<p>${vlogContent.text.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}</p>`;
+      // Display blog content as markdown using marked library
+      if (vlogContent.hasAugmentation && vlogContent.text) {
+        // Use marked to convert markdown to HTML
+        if (typeof marked !== 'undefined') {
+          vlogPost.innerHTML = marked.parse(vlogContent.text);
+        } else {
+          // Fallback to simple conversion if marked is not loaded
+          let html = vlogContent.text
+            .split('\n\n') // Paragraphs
+            .map(para => {
+              // Headers
+              if (para.startsWith('### ')) {
+                return `<h3>${para.substring(4)}</h3>`;
+              } else if (para.startsWith('## ')) {
+                return `<h2>${para.substring(3)}</h2>`;
+              } else if (para.startsWith('# ')) {
+                return `<h1>${para.substring(2)}</h1>`;
+              }
+              // Regular paragraph
+              return `<p>${para.replace(/\n/g, '<br>')}</p>`;
+            })
+            .join('');
+          vlogPost.innerHTML = html;
+        }
+      } else {
+        // Placeholder or processing message
+        vlogPost.innerHTML = `<p>${vlogContent.text.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}</p>`;
+      }
 
       vlogLightbox.classList.add('active');
       vlogVideo.play();

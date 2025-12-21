@@ -350,7 +350,9 @@
       
       <p><strong>Privacy & Security:</strong> All images are proxied through the server with EXIF location data automatically stripped. Original iCloud URLs are never exposed to clients. Images are optimized for web display (resized and compressed) for faster loading.</p>
       
-      <p><strong>Video Support:</strong> The viewer supports both photos and videos from iCloud shared albums.</p>
+      <p><strong>Video Support:</strong> The viewer supports both photos and videos from iCloud shared albums. Videos can be automatically transcribed and converted to blog posts using AI.</p>
+      
+      <p><strong>Feed View:</strong> Albums can be viewed in a blog-style feed format at <code>/feed/:token</code>. This view is ideal for mixed photo/video albums, where videos are displayed as blog posts with automatic transcription and AI-generated content. Photos appear in a responsive grid interspersed with the video posts.</p>
     </section>
 
     <section class="section">
@@ -383,8 +385,12 @@
       <h2>API Endpoints</h2>
       
       <h3>View Album</h3>
-      <p>Access albums directly via URL:</p>
+      <p>Access albums directly via URL (grid view):</p>
       <div class="url-display" id="album-url"></div>
+
+      <h3>Feed View</h3>
+      <p>View albums in a blog-style feed format (ideal for mixed photo/video albums with transcriptions):</p>
+      <div class="url-display" id="feed-url"></div>
 
       <h3>Fetch Album Data</h3>
       <p>Get album data as JSON (supports encrypted tokens with <code>e-</code> prefix):</p>
@@ -440,10 +446,12 @@
 
     // Update API URLs (make them clickable)
     const albumUrl = `${baseUrl}/${exampleToken}`;
+    const feedUrl = `${baseUrl}/feed/${exampleToken}`;
     const apiUrl = `${baseUrl}/api/album/${exampleToken}`;
     const encryptUrl = `${baseUrl}/api/encrypt-token`;
     
     document.getElementById('album-url').innerHTML = `<a href="${albumUrl}" target="_blank" rel="noopener noreferrer">${albumUrl}</a>`;
+    document.getElementById('feed-url').innerHTML = `<a href="${feedUrl}" target="_blank" rel="noopener noreferrer">${feedUrl}</a>`;
     document.getElementById('api-url').innerHTML = `<a href="${apiUrl}" target="_blank" rel="noopener noreferrer">${apiUrl}</a>`;
     document.getElementById('api-encrypt-url').innerHTML = `<a href="${encryptUrl}" target="_blank" rel="noopener noreferrer">POST ${encryptUrl}</a>`;
 
