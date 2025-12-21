@@ -463,10 +463,19 @@
 
     .vlog-lightbox-video {
       width: 100%;
-      aspect-ratio: 16 / 9;
+      /* aspect-ratio set dynamically via JavaScript based on video dimensions */
       background: #000;
       border-radius: 8px;
       overflow: hidden;
+      /* On desktop, constrain height so video doesn't exceed viewport */
+      max-height: calc(100vh - 60px); /* Account for lightbox padding and spacing */
+    }
+    
+    /* On mobile, remove max-height constraint to allow natural sizing */
+    @media (max-width: 968px) {
+      .vlog-lightbox-video {
+        max-height: none;
+      }
     }
 
     .vlog-lightbox-video video {
@@ -1262,6 +1271,18 @@
       vlogVideo.src = video.url;
       vlogTitle.textContent = vlogContent.title;
       vlogDate.textContent = formatDate(item.dateCreated);
+      
+      // Set aspect ratio based on video dimensions from metadata
+      const vlogVideoContainer = document.querySelector('.vlog-lightbox-video');
+      if (video.width && video.height && vlogVideoContainer) {
+        const aspectRatio = video.width / video.height;
+        vlogVideoContainer.style.aspectRatio = `${video.width} / ${video.height}`;
+      } else {
+        // Fallback to 16:9 if dimensions not available
+        if (vlogVideoContainer) {
+          vlogVideoContainer.style.aspectRatio = '16 / 9';
+        }
+      }
       
       // Display blog content as markdown using marked library
       if (vlogContent.hasAugmentation && vlogContent.text) {
