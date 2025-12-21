@@ -1406,17 +1406,32 @@ app.get('/', (req, res) => {
 // Serve static files from public directory (before dynamic routes)
 // Configure static middleware to set proper cache headers
 app.use(express.static(path.join(__dirname, 'public'), {
-  setHeaders: (res, filePath) => {
+  setHeaders: (res, filePath, stat) => {
+    // Use file modification time if available, otherwise use current time
+    const mtime = stat && stat.mtime ? stat.mtime.getTime() : Date.now();
+    const lastModified = stat && stat.mtime ? stat.mtime.toUTCString() : new Date().toUTCString();
+    
     // Don't cache HTML files (they should always be fresh)
     if (filePath.endsWith('.html')) {
       res.set('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
       res.set('Pragma', 'no-cache');
       res.set('Expires', '0');
-      res.set('ETag', `"${Date.now()}"`); // Always unique ETag for HTML
+      res.set('ETag', `"${mtime}"`);
+      res.set('Last-Modified', lastModified);
     } else if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
-      // Cache JS/CSS with shorter TTL and revalidation for iOS
-      res.set('Cache-Control', 'public, max-age=3600, must-revalidate');
+      // Cache JS/CSS with no-cache but allow revalidation for iOS
+      // This forces iOS to check with server but allows caching if unchanged
+      res.set('Cache-Control', 'no-cache, must-revalidate');
+      res.set('ETag', `"${mtime}"`);
+      res.set('Last-Modified', lastModified);
       res.set('Vary', 'Accept-Encoding');
+    } else if (filePath.endsWith('sw.js')) {
+      // Service worker should never be cached
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+      res.set('Pragma', 'no-cache');
+      res.set('Expires', '0');
+      res.set('ETag', `"${mtime}"`);
+      res.set('Last-Modified', lastModified);
     } else {
       // Cache other static assets (images, etc.) aggressively
       res.set('Cache-Control', 'public, max-age=31536000, immutable');

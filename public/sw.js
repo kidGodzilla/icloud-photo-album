@@ -1,11 +1,11 @@
 // Service Worker for iCloud Photo Album PWA
 // Handles badge notifications for new photos using navigator.setAppBadge
-// Version: 2 - Updated to handle cache busting
+// Version: 2.1 - Updated to handle cache busting
 
 const BADGE_CHECK_INTERVAL = 15 * 60 * 1000; // Check every 15 minutes
 const DB_NAME = 'icloud-album-badges';
 const DB_VERSION = 1;
-const CACHE_VERSION = 'v2'; // Increment this when you want to bust the cache
+const CACHE_VERSION = 'v2.1'; // Increment this when you want to bust the cache
 
 // Install event
 self.addEventListener('install', (event) => {

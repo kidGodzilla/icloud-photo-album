@@ -83,6 +83,7 @@
     .header {
       text-align: center;
       margin-bottom: 30px;
+      position: relative;
     }
 
     .header h1 {
@@ -95,6 +96,46 @@
     .header p {
       color: #666;
       font-size: 14px;
+    }
+
+    .notification-permission-banner {
+      display: none;
+      background: #007AFF;
+      color: white;
+      padding: 12px 20px;
+      border-radius: 8px;
+      margin: 20px auto;
+      max-width: 500px;
+      text-align: center;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .notification-permission-banner.show {
+      display: block;
+    }
+
+    .notification-permission-banner button {
+      background: white;
+      color: #007AFF;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      margin-top: 8px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .notification-permission-banner button:active {
+      opacity: 0.8;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .notification-permission-banner {
+        background: #0A84FF;
+      }
     }
 
     .loading {
@@ -389,6 +430,10 @@
     <div class="header">
       <h1 id="album-title">Photo Album</h1>
       <p id="album-subtitle">Loading...</p>
+      <div id="notification-permission-banner" class="notification-permission-banner">
+        <div>Enable notifications to get badge updates when new photos are added</div>
+        <button id="request-notification-permission">Enable Notifications</button>
+      </div>
     </div>
     <div id="loading" class="loading">Loading photos...</div>
     <div id="error" class="error" style="display: none;"></div>
@@ -853,54 +898,20 @@
     // Service Worker registration and badge management
     // Only register on album pages (not landing page)
     if ('serviceWorker' in navigator && token) {
-      navigator.serviceWorker.register('/sw.js', {
-        scope: window.location.pathname // Scope to current album path
+      // Unregister all existing service workers first to force cache bust
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        return Promise.all(registrations.map((registration) => registration.unregister()));
+      }).then(() => {
+        // Wait a bit, then register with versioned URL to bust iOS cache
+        const SW_VERSION = 'v2'; // Increment this to force service worker update
+        return navigator.serviceWorker.register(`/sw.js?v=${SW_VERSION}`, {
+          scope: window.location.pathname // Scope to current album path
+        });
       }).then((registration) => {
         console.log('Service Worker registered:', registration);
         
-        // Wait for service worker to be ready, then request notification permission
-        // iOS requires notification permission for badges to work
-        if (registration.active || registration.installing || registration.waiting) {
-          const checkPermission = () => {
-            if ('Notification' in window) {
-              if ('permission' in Notification) {
-                const currentPermission = Notification.permission;
-                console.log('Current notification permission:', currentPermission);
-                
-                if (currentPermission === 'default') {
-                  // Permission hasn't been requested yet - request it
-                  // On iOS, this might only work in standalone mode or after user interaction
-                  Notification.requestPermission().then((result) => {
-                    console.log('Notification permission result:', result);
-                    if (result === 'granted') {
-                      console.log('Notification permission granted - badges will work on iOS');
-                    } else if (result === 'denied') {
-                      console.log('Notification permission denied - badges will not work on iOS');
-                      console.log('Note: On iOS, you may need to enable notifications in Settings > Safari > [Site] > Notifications');
-                    }
-                  }).catch((error) => {
-                    console.error('Error requesting notification permission:', error);
-                  });
-                } else if (currentPermission === 'granted') {
-                  console.log('Notification permission already granted - badges will work on iOS');
-                } else {
-                  console.log('Notification permission denied - badges will not work on iOS');
-                  console.log('Note: On iOS, enable notifications in Settings > Safari > [Site] > Notifications');
-                }
-              } else if ('requestPermission' in Notification) {
-                // Fallback for older API
-                Notification.requestPermission().then((result) => {
-                  console.log('Notification permission result:', result);
-                }).catch((error) => {
-                  console.error('Error requesting notification permission:', error);
-                });
-              }
-            }
-          };
-          
-          // Check permission after a short delay to ensure service worker is ready
-          setTimeout(checkPermission, 500);
-        }
+        // Check notification permission and show banner on iOS if needed
+        checkNotificationPermission();
         
         // Update tracked tokens when album loads
         updateTrackedTokens([token]);
@@ -932,6 +943,78 @@
         { type: 'CLEAR_BADGE' },
         [channel.port2]
       );
+    }
+
+    // Detect iOS
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+    // Check notification permission and show banner if needed
+    function checkNotificationPermission() {
+      if (!('Notification' in window)) {
+        return;
+      }
+
+      const currentPermission = Notification.permission;
+      const banner = document.getElementById('notification-permission-banner');
+      
+      // Show banner on iOS if permission is default (not yet requested)
+      if (isIOS && currentPermission === 'default' && banner) {
+        banner.classList.add('show');
+      } else if (banner) {
+        banner.classList.remove('show');
+      }
+
+      console.log('Current notification permission:', currentPermission);
+      if (currentPermission === 'granted') {
+        console.log('Notification permission granted - badges will work');
+      } else if (currentPermission === 'denied') {
+        console.log('Notification permission denied - badges will not work');
+        if (isIOS) {
+          console.log('On iOS, enable notifications in Settings > Safari > [Site] > Notifications');
+        }
+      }
+    }
+
+    // Request notification permission on button click (iOS requires user interaction)
+    const requestPermissionButton = document.getElementById('request-notification-permission');
+    if (requestPermissionButton) {
+      requestPermissionButton.addEventListener('click', async () => {
+        if (!('Notification' in window)) {
+          alert('Notifications are not supported in this browser.');
+          return;
+        }
+
+        try {
+          const result = await Notification.requestPermission();
+          console.log('Notification permission result:', result);
+          
+          const banner = document.getElementById('notification-permission-banner');
+          if (banner) {
+            banner.classList.remove('show');
+          }
+
+          if (result === 'granted') {
+            console.log('Notification permission granted - badges will work');
+            // Optionally show a success message
+            if (requestPermissionButton) {
+              requestPermissionButton.textContent = 'Enabled!';
+              requestPermissionButton.style.background = '#34C759';
+              requestPermissionButton.style.color = 'white';
+              setTimeout(() => {
+                if (banner) banner.classList.remove('show');
+              }, 2000);
+            }
+          } else if (result === 'denied') {
+            console.log('Notification permission denied - badges will not work');
+            if (isIOS) {
+              alert('To enable badge notifications, go to Settings > Safari > [This Site] > Notifications and enable them.');
+            }
+          }
+        } catch (error) {
+          console.error('Error requesting notification permission:', error);
+        }
+      });
     }
 
     // Keyboard navigation
