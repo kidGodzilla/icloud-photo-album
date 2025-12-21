@@ -139,6 +139,33 @@
       display: block;
     }
 
+    .photo-item.video-item {
+      position: relative;
+    }
+
+    .photo-item .play-icon {
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      width: 32px;
+      height: 32px;
+      background: rgba(0, 0, 0, 0.6);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 14px;
+      pointer-events: none;
+      z-index: 2;
+      backdrop-filter: blur(4px);
+    }
+
+    .photo-item .play-icon::before {
+      content: '▶';
+      margin-left: 2px; /* Slight offset to center the triangle visually */
+    }
+
     .lightbox {
       display: none;
       position: fixed;
@@ -567,7 +594,8 @@
         }
         
         const item = document.createElement('div');
-        item.className = 'photo-item';
+        const isVideoMedia = isVideo(photo);
+        item.className = isVideoMedia ? 'photo-item video-item' : 'photo-item';
         
         // Create img element and store reference for lightbox reuse
         const img = document.createElement('img');
@@ -576,6 +604,14 @@
         img.loading = 'lazy';
         img.dataset.photoIndex = index; // Store index for quick lookup
         item.appendChild(img);
+        
+        // Add play icon overlay for videos
+        if (isVideoMedia) {
+          const playIcon = document.createElement('div');
+          playIcon.className = 'play-icon';
+          item.appendChild(playIcon);
+        }
+        
         item.addEventListener('click', () => openLightbox(index));
         grid.appendChild(item);
       });

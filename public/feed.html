@@ -117,6 +117,33 @@
       display: block;
     }
 
+    .photo-item.video-item {
+      position: relative;
+    }
+
+    .photo-item .play-icon {
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      width: 32px;
+      height: 32px;
+      background: rgba(0, 0, 0, 0.6);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 14px;
+      pointer-events: none;
+      z-index: 2;
+      backdrop-filter: blur(4px);
+    }
+
+    .photo-item .play-icon::before {
+      content: '▶';
+      margin-left: 2px; /* Slight offset to center the triangle visually */
+    }
+
     /* Vlog Post Card */
     .vlog-post {
       position: relative;
@@ -932,7 +959,7 @@
 
             const thumbnail = getBestThumbnail(item);
             const photoItem = document.createElement('div');
-            photoItem.className = 'photo-item';
+            photoItem.className = 'photo-item video-item';
             photoItem.dataset.itemIndex = index;
 
             if (thumbnail && thumbnail.url) {
@@ -941,6 +968,11 @@
               img.alt = '';
               img.loading = 'lazy';
               photoItem.appendChild(img);
+              
+              // Add play icon overlay for videos
+              const playIcon = document.createElement('div');
+              playIcon.className = 'play-icon';
+              photoItem.appendChild(playIcon);
             } else {
               // No thumbnail found - create a placeholder
               console.warn('Skipped video (no thumbnail) for photo grid:', item.photoGuid);
@@ -1037,7 +1069,7 @@
 
             const thumbnail = getBestThumbnail(item);
             const photoItem = document.createElement('div');
-            photoItem.className = 'photo-item';
+            photoItem.className = 'photo-item video-item';
             photoItem.dataset.itemIndex = index;
 
             if (thumbnail && thumbnail.url) {
@@ -1046,6 +1078,11 @@
               img.alt = '';
               img.loading = 'lazy';
               photoItem.appendChild(img);
+              
+              // Add play icon overlay for videos
+              const playIcon = document.createElement('div');
+              playIcon.className = 'play-icon';
+              photoItem.appendChild(playIcon);
             } else {
               // No thumbnail found - create a placeholder
               const placeholder = document.createElement('div');
