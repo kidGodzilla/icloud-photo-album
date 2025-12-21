@@ -362,6 +362,11 @@
       padding: 40px 20px;
     }
 
+    /* Prevent body scroll when lightbox is open */
+    body.lightbox-open {
+      overflow: hidden;
+    }
+
     .vlog-lightbox-close {
       position: fixed;
       top: 20px;
@@ -419,6 +424,9 @@
 
     .vlog-lightbox-text {
       color: white;
+      overflow-y: auto;
+      max-height: calc(100vh - 40px);
+      padding-right: 8px;
     }
 
     .vlog-lightbox-title {
@@ -1085,6 +1093,7 @@
         : `<div>${date}</div>`;
 
       lightbox.classList.add('active');
+      document.body.classList.add('lightbox-open');
     }
 
     function openPhotoLightbox(itemIndex) {
@@ -1126,6 +1135,7 @@
         : `<div>${date}</div>`;
 
       lightbox.classList.add('active');
+      document.body.classList.add('lightbox-open');
     }
 
     // Load video augmentation asynchronously and update the UI
@@ -1220,6 +1230,7 @@
       }
 
       vlogLightbox.classList.add('active');
+      document.body.classList.add('lightbox-open');
       vlogVideo.play();
     }
 
@@ -1227,12 +1238,14 @@
     document.getElementById('lightbox-close').addEventListener('click', (e) => {
       e.stopPropagation();
       document.getElementById('lightbox').classList.remove('active');
+      document.body.classList.remove('lightbox-open');
       document.getElementById('lightbox-video').pause();
     });
 
     document.getElementById('lightbox').addEventListener('click', (e) => {
       if (e.target.id === 'lightbox') {
         document.getElementById('lightbox').classList.remove('active');
+      document.body.classList.remove('lightbox-open');
         document.getElementById('lightbox-video').pause();
       }
     });
@@ -1265,6 +1278,7 @@
       const vlogLightbox = document.getElementById('vlog-lightbox');
       const vlogVideo = document.getElementById('vlog-lightbox-video');
       vlogLightbox.classList.remove('active');
+      document.body.classList.remove('lightbox-open');
       vlogVideo.pause();
       vlogVideo.src = '';
     });
@@ -1277,6 +1291,7 @@
       if (lightbox.classList.contains('active')) {
         if (e.key === 'Escape') {
           lightbox.classList.remove('active');
+          document.body.classList.remove('lightbox-open');
           document.getElementById('lightbox-video').pause();
         } else if (e.key === 'ArrowLeft') {
           document.getElementById('lightbox-prev').click();
