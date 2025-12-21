@@ -4,15 +4,31 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#007AFF">
-  <meta name="description" content="Vlog feed view of iCloud shared photo albums with mixed photo and video content.">
-  <title>Feed View</title>
+  <meta name="description" content="Vlog feed view of iCloud shared photo albums with mixed photo and video content. Videos are automatically transcribed and converted to blog posts with AI.">
+  <meta name="keywords" content="icloud, photo album, vlog, feed, video transcription, blog, shared album">
+  <meta name="application-name" content="Photo Album">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta id="apple-mobile-web-app-title" name="apple-mobile-web-app-title" content="Photo Album">
+  
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="iCloud Photo Album - Vlog Feed">
+  <meta property="og:description" content="Vlog feed view of iCloud shared photo albums with automatic video transcription and AI-generated blog posts.">
+  
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="iCloud Photo Album - Vlog Feed">
+  <meta name="twitter:description" content="Vlog feed view of iCloud shared photo albums with automatic video transcription and AI-generated blog posts.">
 
   <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-  <meta name="apple-mobile-web-app-title" content="Photo Album" />
   <link rel="manifest" href="/site.webmanifest" />
+  
+  <title>iCloud Photo Album - Vlog Feed</title>
 
   <style>
     * {
@@ -747,9 +763,37 @@
 
         // Update header
         if (data.metadata) {
+          // Update page title and iOS "Add to Home Screen" title
+          // Priority: streamName > firstName > full name
+          let pageTitle = null;
+          let appTitle = null;
+          
           if (data.metadata.streamName) {
-            document.getElementById('feed-title').textContent = data.metadata.streamName;
+            const streamName = data.metadata.streamName;
+            pageTitle = `${streamName} - Vlog Feed`;
+            appTitle = streamName.length > 12 ? streamName.substring(0, 12) : streamName;
+            document.getElementById('feed-title').textContent = streamName;
+          } else {
+            const firstName = data.metadata.userFirstName || '';
+            const lastName = data.metadata.userLastName || '';
+            if (firstName || lastName) {
+              const fullName = `${firstName} ${lastName}`.trim();
+              pageTitle = `${fullName}'s Feed - Vlog Feed`;
+              appTitle = firstName || (fullName.length > 12 ? fullName.substring(0, 12) : fullName);
+            }
           }
+          
+          // Update browser tab title
+          if (pageTitle) {
+            document.title = pageTitle;
+          }
+          
+          // Update iOS "Add to Home Screen" title
+          const titleMeta = document.getElementById('apple-mobile-web-app-title');
+          if (titleMeta && appTitle) {
+            titleMeta.setAttribute('content', appTitle);
+          }
+          
           document.getElementById('feed-subtitle').textContent = `${items.length} post${items.length !== 1 ? 's' : ''}`;
         }
 

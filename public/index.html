@@ -10,7 +10,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Photo Album">
+  <meta id="apple-mobile-web-app-title" name="apple-mobile-web-app-title" content="Photo Album">
   
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website">
@@ -26,7 +26,6 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-  <meta name="apple-mobile-web-app-title" content="Photo Album" />
   <link rel="manifest" href="/site.webmanifest" />
   
   <title>iCloud Photo Album</title>
@@ -465,10 +464,42 @@
 
         // Update header
         if (data.metadata) {
+          // Update page title and iOS "Add to Home Screen" title
+          // Priority: streamName > firstName > full name
+          let pageTitle = null;
+          let appTitle = null;
+          
+          if (data.metadata.streamName) {
+            const streamName = data.metadata.streamName;
+            pageTitle = `${streamName} - Photo Album`;
+            appTitle = streamName.length > 12 ? streamName.substring(0, 12) : streamName;
+          } else {
+            const firstName = data.metadata.userFirstName || '';
+            const lastName = data.metadata.userLastName || '';
+            if (firstName || lastName) {
+              const fullName = `${firstName} ${lastName}`.trim();
+              pageTitle = `${fullName}'s Album - Photo Album`;
+              appTitle = firstName || (fullName.length > 12 ? fullName.substring(0, 12) : fullName);
+            }
+          }
+          
+          // Update browser tab title
+          if (pageTitle) {
+            document.title = pageTitle;
+          }
+          
+          // Update iOS "Add to Home Screen" title
+          const titleMeta = document.getElementById('apple-mobile-web-app-title');
+          if (titleMeta && appTitle) {
+            titleMeta.setAttribute('content', appTitle);
+          }
+          
+          // Update page title display
           const firstName = data.metadata.userFirstName || '';
           const lastName = data.metadata.userLastName || '';
           if (firstName || lastName) {
-            document.getElementById('album-title').textContent = `${firstName} ${lastName}'s Album`;
+            const albumTitle = `${firstName} ${lastName}'s Album`;
+            document.getElementById('album-title').textContent = albumTitle;
           }
           document.getElementById('album-subtitle').textContent = `${photos.length} photo${photos.length !== 1 ? 's' : ''}`;
         }
