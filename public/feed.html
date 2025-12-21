@@ -307,6 +307,8 @@
 
     .lightbox-content {
       position: relative;
+      width: 100%;
+      height: 100%;
       max-width: 90vw;
       max-height: 90vh;
       display: flex;
@@ -489,7 +491,7 @@
         max-height: calc(100vh - 350px); /* Leave room for header, text area, and padding */
         max-width: 90%; /* Slightly smaller to give breathing room */
         margin: 0 auto; /* Center the video */
-        width: fit-content; /* Let video size naturally within constraints */
+        width: auto; /* Let video size naturally within constraints */
       }
       
       .vlog-lightbox-content {
@@ -498,6 +500,14 @@
       
       .vlog-lightbox-text {
         max-height: 40vh; /* Constrain text area to allow video to be visible */
+      }
+    }
+    
+    /* Desktop - ensure full width and proper sizing */
+    @media (min-width: 969px) {
+      .vlog-lightbox-video {
+        width: 100% !important;
+        max-width: 100% !important;
       }
     }
 
@@ -892,6 +902,37 @@
       const preferred = sizes.find(d => d.size >= 257) || sizes[0];
       const result = item.derivatives[preferred.key];
       return (result && result.url) ? result : null;
+    }
+
+    function getBestImage(item) {
+      // Get the largest image derivative for lightbox display
+      if (!item || !item.derivatives || Object.keys(item.derivatives).length === 0) {
+        return null;
+      }
+      
+      // Helper to extract numeric size from key (handles "1280-1" -> 1280)
+      function extractSize(key) {
+        const match = key.toString().match(/^(\d+)/);
+        return match ? parseInt(match[1], 10) : 0;
+      }
+      
+      // Filter out videos and get all image derivatives
+      const imageSizes = Object.keys(item.derivatives)
+        .filter(key => {
+          const derivative = item.derivatives[key];
+          if (!derivative || !derivative.url) return false;
+          const url = derivative.url.toLowerCase();
+          return !url.includes('.mp4');
+        })
+        .map(key => ({ key, size: extractSize(key) }))
+        .sort((a, b) => b.size - a.size); // Sort descending to get largest first
+      
+      if (imageSizes.length > 0) {
+        const result = item.derivatives[imageSizes[0].key];
+        return (result && result.url) ? result : null;
+      }
+      
+      return null;
     }
 
     function getBestVideo(item) {
@@ -1315,14 +1356,18 @@
       currentPhotoIndex = photoItems.findIndex(photo => photo === item);
       if (currentPhotoIndex === -1) return;
 
-      const thumbnail = getBestThumbnail(item);
-      if (!thumbnail || !thumbnail.url) return;
+      // Get the largest image for lightbox (not thumbnail)
+      const bestImage = getBestImage(item);
+      if (!bestImage || !bestImage.url) return;
 
       const lightbox = document.getElementById('lightbox');
       const lightboxImage = document.getElementById('lightbox-image');
+      const lightboxVideo = document.getElementById('lightbox-video');
       const lightboxInfo = document.getElementById('lightbox-info');
 
-      lightboxImage.src = thumbnail.url;
+      // Hide video, show image
+      lightboxVideo.style.display = 'none';
+      lightboxImage.src = bestImage.url;
       lightboxImage.style.display = 'block';
 
       const caption = item.caption || '';
