@@ -406,6 +406,32 @@
         grid-template-columns: 1fr;
         gap: 30px;
       }
+
+      /* Picture-in-picture mode for video on mobile */
+      .vlog-lightbox-video {
+        position: relative;
+        transition: all 0.3s ease;
+      }
+
+      .vlog-lightbox-video.pip-mode {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        width: 160px;
+        height: 90px;
+        z-index: 2002;
+        border-radius: 8px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+      }
+
+      .vlog-lightbox-video.pip-mode video {
+        border-radius: 8px;
+      }
+
+      /* Add padding to text when video is in PIP mode */
+      .vlog-lightbox-text.pip-active {
+        padding-bottom: 120px; /* Space for PIP video + margin */
+      }
     }
 
     .vlog-lightbox-video {
@@ -1232,6 +1258,81 @@
       vlogLightbox.classList.add('active');
       document.body.classList.add('lightbox-open');
       vlogVideo.play();
+
+      // Setup picture-in-picture scroll detection for mobile
+      setupVlogPIP();
+    }
+
+    // Setup picture-in-picture for vlog lightbox on mobile
+    function setupVlogPIP() {
+      const vlogLightbox = document.getElementById('vlog-lightbox');
+      const vlogVideoContainer = document.querySelector('.vlog-lightbox-video');
+      const vlogText = document.querySelector('.vlog-lightbox-text');
+      
+      if (!vlogLightbox || !vlogVideoContainer || !vlogText) return;
+
+      // Only enable on mobile devices
+      const isMobile = window.innerWidth <= 968;
+      if (!isMobile) return;
+
+      // Handle scroll - check if video is scrolled out of view
+      const handleScroll = () => {
+        if (!vlogLightbox.classList.contains('active')) return;
+
+        // Check if video is scrolled out of view (top of video is above viewport)
+        const rect = vlogVideoContainer.getBoundingClientRect();
+        const isVideoOutOfView = rect.bottom < 50; // 50px threshold
+
+        // If video is scrolled out of view, enable PIP mode
+        if (isVideoOutOfView) {
+          vlogVideoContainer.classList.add('pip-mode');
+          vlogText.classList.add('pip-active');
+        } else {
+          vlogVideoContainer.classList.remove('pip-mode');
+          vlogText.classList.remove('pip-active');
+        }
+      };
+
+      // Listen to scroll on the lightbox container (which is scrollable)
+      vlogLightbox.addEventListener('scroll', handleScroll);
+      
+      // Also use IntersectionObserver for better performance
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (!vlogLightbox.classList.contains('active')) return;
+          
+          // If video is not intersecting (scrolled out of view), enable PIP
+          if (!entry.isIntersecting) {
+            vlogVideoContainer.classList.add('pip-mode');
+            vlogText.classList.add('pip-active');
+          } else {
+            vlogVideoContainer.classList.remove('pip-mode');
+            vlogText.classList.remove('pip-active');
+          }
+        });
+      }, {
+        root: vlogLightbox,
+        threshold: 0,
+        rootMargin: '-50px 0px 0px 0px' // Trigger when video is 50px from top
+      });
+
+      // Observe the video container
+      observer.observe(vlogVideoContainer);
+
+      // Clean up when lightbox closes
+      const closeObserver = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+          if (!vlogLightbox.classList.contains('active')) {
+            vlogVideoContainer.classList.remove('pip-mode');
+            vlogText.classList.remove('pip-active');
+            vlogLightbox.removeEventListener('scroll', handleScroll);
+            observer.disconnect();
+            closeObserver.disconnect();
+          }
+        });
+      });
+
+      closeObserver.observe(vlogLightbox, { attributes: true, attributeFilter: ['class'] });
     }
 
     // Lightbox controls
@@ -1277,8 +1378,16 @@
     document.getElementById('vlog-lightbox-close').addEventListener('click', () => {
       const vlogLightbox = document.getElementById('vlog-lightbox');
       const vlogVideo = document.getElementById('vlog-lightbox-video');
+      const vlogVideoContainer = document.querySelector('.vlog-lightbox-video');
+      const vlogText = document.querySelector('.vlog-lightbox-text');
+      
       vlogLightbox.classList.remove('active');
       document.body.classList.remove('lightbox-open');
+      
+      // Reset PIP mode
+      if (vlogVideoContainer) vlogVideoContainer.classList.remove('pip-mode');
+      if (vlogText) vlogText.classList.remove('pip-active');
+      
       vlogVideo.pause();
       vlogVideo.src = '';
     });
