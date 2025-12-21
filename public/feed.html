@@ -453,6 +453,29 @@
         max-height: none;
       }
     }
+    
+    /* Small tablets in portrait mode - constrain vertical videos to fit viewport */
+    @media (min-width: 600px) and (max-width: 968px) and (orientation: portrait) {
+      .vlog-lightbox {
+        padding: 16px;
+        overflow-y: auto; /* Allow scrolling if content exceeds viewport */
+      }
+      
+      .vlog-lightbox-video {
+        max-height: calc(100vh - 350px); /* Leave room for header, text area, and padding */
+        max-width: 90%; /* Slightly smaller to give breathing room */
+        margin: 0 auto; /* Center the video */
+        width: fit-content; /* Let video size naturally within constraints */
+      }
+      
+      .vlog-lightbox-content {
+        gap: 20px; /* Reduce gap on small tablets */
+      }
+      
+      .vlog-lightbox-text {
+        max-height: 40vh; /* Constrain text area to allow video to be visible */
+      }
+    }
 
     .vlog-lightbox-video video {
       width: 100%;
