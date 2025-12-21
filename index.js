@@ -182,8 +182,27 @@ let whisperInstalled = false;
     if (existsSync(WHISPER_DIR) && !existsSync(WHISPER_EXE)) {
       console.log('Incomplete whisper.cpp installation detected. Attempting to clean up...');
       try {
+        // Remove the directory completely
         await fs.rm(WHISPER_DIR, { recursive: true, force: true });
-        await fs.mkdir(WHISPER_DIR, { recursive: true });
+        // Wait and verify it's actually gone
+        let attempts = 0;
+        while (existsSync(WHISPER_DIR) && attempts < 10) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+          attempts++;
+        }
+        if (existsSync(WHISPER_DIR)) {
+          // Force remove using system command as fallback
+          console.log('Directory still exists, trying system rm command...');
+          try {
+            const { exec } = await import('child_process');
+            const { promisify } = await import('util');
+            const execAsync = promisify(exec);
+            await execAsync(`rm -rf "${WHISPER_DIR}"`);
+            await new Promise(resolve => setTimeout(resolve, 500));
+          } catch (forceError) {
+            console.warn('Could not force remove directory:', forceError.message);
+          }
+        }
         console.log('Cleaned up incomplete installation');
       } catch (cleanupError) {
         console.warn('Could not clean up incomplete installation:', cleanupError.message);
@@ -191,7 +210,58 @@ let whisperInstalled = false;
     }
     
     // Install from source
-    await installWhisperCpp({ to: WHISPER_DIR, version: '1.7.1' });
+    // Wrap in try-catch to handle the case where directory still exists
+    try {
+      // Make sure directory doesn't exist before installing
+      if (existsSync(WHISPER_DIR) && !existsSync(WHISPER_EXE)) {
+        console.log('Removing directory before installation...');
+        await fs.rm(WHISPER_DIR, { recursive: true, force: true });
+        // Try system rm as fallback if Node fs.rm doesn't work
+        if (existsSync(WHISPER_DIR)) {
+          try {
+            const { exec } = await import('child_process');
+            const { promisify } = await import('util');
+            const execAsync = promisify(exec);
+            await execAsync(`rm -rf "${WHISPER_DIR}"`);
+          } catch (e) {
+            // Ignore errors from system rm
+          }
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      
+      await installWhisperCpp({ to: WHISPER_DIR, version: '1.7.1' });
+    } catch (installError) {
+      // If error says directory exists, try removing it and retrying
+      if (installError.message && (installError.message.includes('exists but the executable') || installError.message.includes('exists but'))) {
+        console.log('Installation error detected, retrying after full cleanup...');
+        try {
+          // Force remove
+          if (existsSync(WHISPER_DIR)) {
+            await fs.rm(WHISPER_DIR, { recursive: true, force: true });
+            // Try system rm as fallback
+            try {
+              const { exec } = await import('child_process');
+              const { promisify } = await import('util');
+              const execAsync = promisify(exec);
+              await execAsync(`rm -rf "${WHISPER_DIR}"`);
+            } catch (e) {
+              // Ignore errors from system rm
+            }
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            // Verify it's actually gone
+            if (existsSync(WHISPER_DIR)) {
+              throw new Error(`Directory ${WHISPER_DIR} still exists after cleanup attempt. Please manually remove it.`);
+            }
+          }
+          await installWhisperCpp({ to: WHISPER_DIR, version: '1.7.1' });
+        } catch (retryError) {
+          throw retryError;
+        }
+      } else {
+        throw installError;
+      }
+    }
     await downloadWhisperModel({
       model: WHISPER_MODEL,
       folder: WHISPER_DIR,
