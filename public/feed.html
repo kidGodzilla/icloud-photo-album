@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#007AFF">
+  <meta name="description" content="Vlog feed view of iCloud shared photo albums with mixed photo and video content.">
+  <title>Feed View</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: #f5f5f5;
+      color: #333;
+      overflow-x: hidden;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      body {
+        background: #1a1a1a;
+        color: #e0e0e0;
+      }
+    }
+
+    .feed-container {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    @media (max-width: 768px) {
+      .feed-container {
+        padding: 12px;
+      }
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+
+    .header h1 {
+      font-size: 32px;
+      font-weight: 600;
+      color: #1a1a1a;
+      margin-bottom: 8px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .header h1 {
+        color: #ffffff;
+      }
+    }
+
+    .header p {
+      color: #666;
+      font-size: 16px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .header p {
+        color: #b0b0b0;
+      }
+    }
+
+    .loading {
+      text-align: center;
+      padding: 60px 20px;
+      color: #999;
+    }
+
+    .error {
+      text-align: center;
+      padding: 60px 20px;
+      color: #d32f2f;
+    }
+
+    /* Photo Grid */
+    .photo-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+
+    @media (max-width: 768px) {
+      .photo-grid {
+        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+        gap: 6px;
+        margin-bottom: 20px;
+      }
+    }
+
+    .photo-item {
+      position: relative;
+      aspect-ratio: 1;
+      overflow: hidden;
+      cursor: pointer;
+      background: #e0e0e0;
+      border-radius: 8px;
+      transition: transform 0.2s ease;
+    }
+
+    .photo-item:hover {
+      transform: scale(1.03);
+    }
+
+    .photo-item img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    /* Vlog Post Card */
+    .vlog-post {
+      background: white;
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 32px;
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .vlog-post {
+        background: #2a2a2a;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      }
+    }
+
+    .vlog-post:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .vlog-post:hover {
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+      }
+    }
+
+    .vlog-thumbnail {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+      display: block;
+      background: #000;
+    }
+
+    .vlog-content {
+      padding: 20px;
+    }
+
+    .vlog-title {
+      font-size: 24px;
+      font-weight: 600;
+      color: #1a1a1a;
+      margin-bottom: 12px;
+      line-height: 1.3;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .vlog-title {
+        color: #ffffff;
+      }
+    }
+
+    .vlog-text-preview {
+      font-size: 16px;
+      line-height: 1.6;
+      color: #555;
+      margin-bottom: 16px;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .vlog-text-preview {
+        color: #b0b0b0;
+      }
+    }
+
+    .vlog-meta {
+      font-size: 14px;
+      color: #999;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .vlog-meta {
+        color: #888;
+      }
+    }
+
+    .vlog-date {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Lightbox for photos */
+    .lightbox {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.95);
+      z-index: 1000;
+      cursor: pointer;
+    }
+
+    .lightbox.active {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .lightbox-content {
+      position: relative;
+      max-width: 90vw;
+      max-height: 90vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .lightbox-image,
+    .lightbox-video {
+      max-width: 100%;
+      max-height: 90vh;
+      object-fit: contain;
+      user-select: none;
+    }
+
+    .lightbox-close {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: rgba(255, 255, 255, 0.1);
+      border: none;
+      color: white;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s ease;
+      backdrop-filter: blur(10px);
+      font-family: Arial, sans-serif;
+      z-index: 1001;
+    }
+
+    .lightbox-close:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .lightbox-nav {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      background: rgba(255, 255, 255, 0.1);
+      border: none;
+      color: white;
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s ease;
+      backdrop-filter: blur(10px);
+      z-index: 1001;
+    }
+
+    .lightbox-nav:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .lightbox-nav.prev {
+      left: 20px;
+    }
+
+    .lightbox-nav.next {
+      right: 20px;
+    }
+
+    .lightbox-info {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.6);
+      color: white;
+      padding: 12px 20px;
+      border-radius: 20px;
+      font-size: 14px;
+      backdrop-filter: blur(10px);
+      text-align: center;
+    }
+
+    /* Vlog Lightbox */
+    .vlog-lightbox {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.95);
+      z-index: 2000;
+      overflow-y: auto;
+    }
+
+    .vlog-lightbox.active {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px;
+    }
+
+    .vlog-lightbox-close {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: rgba(255, 255, 255, 0.1);
+      border: none;
+      color: white;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s ease;
+      backdrop-filter: blur(10px);
+      font-family: Arial, sans-serif;
+      z-index: 2001;
+    }
+
+    .vlog-lightbox-close:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .vlog-lightbox-content {
+      max-width: 1200px;
+      width: 100%;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 40px;
+      align-items: start;
+    }
+
+    @media (max-width: 968px) {
+      .vlog-lightbox-content {
+        grid-template-columns: 1fr;
+        gap: 30px;
+      }
+    }
+
+    .vlog-lightbox-video {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #000;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .vlog-lightbox-video video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .vlog-lightbox-text {
+      color: white;
+    }
+
+    .vlog-lightbox-title {
+      font-size: 32px;
+      font-weight: 600;
+      margin-bottom: 20px;
+      line-height: 1.3;
+    }
+
+    .vlog-lightbox-date {
+      font-size: 14px;
+      color: rgba(255, 255, 255, 0.7);
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .vlog-lightbox-post {
+      font-size: 18px;
+      line-height: 1.8;
+      color: rgba(255, 255, 255, 0.9);
+    }
+
+    .vlog-lightbox-post p {
+      margin-bottom: 16px;
+    }
+
+    .vlog-lightbox-post p:last-child {
+      margin-bottom: 0;
+    }
+
+    @media (max-width: 768px) {
+      .vlog-lightbox {
+        padding: 20px 12px;
+      }
+
+      .vlog-lightbox-content {
+        gap: 24px;
+      }
+
+      .vlog-lightbox-title {
+        font-size: 24px;
+      }
+
+      .vlog-lightbox-post {
+        font-size: 16px;
+      }
+
+      .vlog-lightbox-close {
+        top: 10px;
+        right: 10px;
+        width: 36px;
+        height: 36px;
+        font-size: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="feed-container">
+    <div class="header">
+      <h1 id="feed-title">Vlog Feed</h1>
+      <p id="feed-subtitle">Loading...</p>
+    </div>
+    <div id="loading" class="loading">Loading feed...</div>
+    <div id="error" class="error" style="display: none;"></div>
+    <div id="feed" style="display: none;"></div>
+  </div>
+
+  <!-- Photo Lightbox -->
+  <div id="lightbox" class="lightbox">
+    <button class="lightbox-close" id="lightbox-close" aria-label="Close">×</button>
+    <button class="lightbox-nav prev" id="lightbox-prev" aria-label="Previous">‹</button>
+    <div class="lightbox-content">
+      <img id="lightbox-image" class="lightbox-image" alt="" style="display: none;">
+      <video id="lightbox-video" class="lightbox-video" controls style="display: none;"></video>
+      <div class="lightbox-info" id="lightbox-info"></div>
+    </div>
+    <button class="lightbox-nav next" id="lightbox-next" aria-label="Next">›</button>
+  </div>
+
+  <!-- Vlog Lightbox -->
+  <div id="vlog-lightbox" class="vlog-lightbox">
+    <button class="vlog-lightbox-close" id="vlog-lightbox-close" aria-label="Close">×</button>
+    <div class="vlog-lightbox-content">
+      <div class="vlog-lightbox-video">
+        <video id="vlog-lightbox-video" controls></video>
+      </div>
+      <div class="vlog-lightbox-text">
+        <h2 id="vlog-lightbox-title" class="vlog-lightbox-title"></h2>
+        <div id="vlog-lightbox-date" class="vlog-lightbox-date"></div>
+        <div id="vlog-lightbox-post" class="vlog-lightbox-post"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let items = []; // Mixed array of photos and videos, sorted by date
+    let photoItems = []; // Just photos (for lightbox navigation)
+    let currentPhotoIndex = 0;
+    let touchStartX = 0;
+    let touchEndX = 0;
+
+    // Get token from URL path (e.g., /feed/B1v532ODWVjCzg)
+    const pathParts = window.location.pathname.split('/').filter(Boolean);
+    const token = pathParts[1] || pathParts[pathParts.length - 1]; // Get token after /feed/
+
+    if (!token) {
+      document.getElementById('error').textContent = 'No album token provided. Access via /feed/:token';
+      document.getElementById('error').style.display = 'block';
+      document.getElementById('loading').style.display = 'none';
+    } else {
+      loadFeed(token);
+    }
+
+    async function loadFeed(token) {
+      try {
+        const response = await fetch(`/api/album/${token}`);
+        if (!response.ok) {
+          throw new Error(`Failed to load feed: ${response.statusText}`);
+        }
+        const data = await response.json();
+        
+        const allItems = data.photos || [];
+        
+        // Sort by dateCreated (newest first) - keeping original order for feed
+        allItems.sort((a, b) => {
+          const dateA = a.dateCreated ? new Date(a.dateCreated).getTime() : -Infinity;
+          const dateB = b.dateCreated ? new Date(b.dateCreated).getTime() : -Infinity;
+          return dateB - dateA;
+        });
+        
+        if (allItems.length === 0) {
+          document.getElementById('error').textContent = 'No content found in this feed.';
+          document.getElementById('error').style.display = 'block';
+          document.getElementById('loading').style.display = 'none';
+          return;
+        }
+
+        items = allItems;
+        photoItems = allItems.filter(item => !isVideo(item));
+
+        // Update header
+        if (data.metadata) {
+          if (data.metadata.streamName) {
+            document.getElementById('feed-title').textContent = data.metadata.streamName;
+          }
+          document.getElementById('feed-subtitle').textContent = `${items.length} post${items.length !== 1 ? 's' : ''}`;
+        }
+
+        renderFeed();
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('feed').style.display = 'block';
+      } catch (error) {
+        console.error('Error loading feed:', error);
+        document.getElementById('error').textContent = `Error: ${error.message}`;
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('loading').style.display = 'none';
+      }
+    }
+
+    function isVideo(item) {
+      return item.mediaAssetType === 'video' || 
+             (item.derivatives && Object.values(item.derivatives).some(d => d.url && d.url.includes('.mp4')));
+    }
+
+    function getBestThumbnail(item) {
+      if (!item || !item.derivatives || Object.keys(item.derivatives).length === 0) {
+        return null;
+      }
+      
+      if (isVideo(item)) {
+        // For videos, prefer JPG thumbnails (both original iCloud URLs and rewritten proxy URLs)
+        const jpgDerivatives = Object.keys(item.derivatives)
+          .filter(size => {
+            const derivative = item.derivatives[size];
+            if (!derivative || !derivative.url) return false;
+            const url = derivative.url.toLowerCase();
+            // Check for JPG files or rewritten proxy URLs (which always end in .jpg)
+            return (url.includes('.jpg') || url.startsWith('/api/image/')) &&
+                   !url.includes('.mp4');
+          })
+          .map(Number)
+          .sort((a, b) => a - b);
+        
+        if (jpgDerivatives.length > 0) {
+          const preferred = jpgDerivatives.find(s => s >= 257) || jpgDerivatives[0];
+          const result = item.derivatives[preferred.toString()];
+          if (result && result.url) return result;
+        }
+        // Fallback: any non-video derivative (could be rewritten thumbnail or original JPG)
+        const nonVideoDerivatives = Object.keys(item.derivatives)
+          .filter(size => {
+            const derivative = item.derivatives[size];
+            if (!derivative || !derivative.url) return false;
+            const url = derivative.url.toLowerCase();
+            return !url.includes('.mp4');
+          })
+          .map(Number)
+          .sort((a, b) => a - b);
+        
+        if (nonVideoDerivatives.length > 0) {
+          const result = item.derivatives[nonVideoDerivatives[0].toString()];
+          if (result && result.url) return result;
+        }
+      }
+      
+      // For photos, prefer 257, then 333, then smallest available
+      const sizes = Object.keys(item.derivatives)
+        .filter(size => {
+          const derivative = item.derivatives[size];
+          if (!derivative || !derivative.url) return false;
+          const url = derivative.url.toLowerCase();
+          return !url.includes('.mp4');
+        })
+        .map(Number)
+        .sort((a, b) => a - b);
+      
+      if (sizes.length === 0) {
+        // Last resort: return any derivative with a URL
+        const anyDerivative = Object.values(item.derivatives).find(d => d && d.url);
+        return anyDerivative || null;
+      }
+      
+      const preferred = sizes.find(s => s >= 257) || sizes[0];
+      const result = item.derivatives[preferred.toString()];
+      return (result && result.url) ? result : null;
+    }
+
+    function getBestVideo(item) {
+      const videoSizes = Object.keys(item.derivatives)
+        .filter(size => {
+          const derivative = item.derivatives[size];
+          return derivative.url && derivative.url.includes('.mp4');
+        })
+        .map(Number)
+        .sort((a, b) => b - a);
+      
+      if (videoSizes.length > 0) {
+        return item.derivatives[videoSizes[0].toString()];
+      }
+      return null;
+    }
+
+    function formatDate(dateString) {
+      if (!dateString) return '';
+      const date = new Date(dateString);
+      return date.toLocaleDateString('en-US', { 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      });
+    }
+
+    function formatDateShort(dateString) {
+      if (!dateString) return '';
+      const date = new Date(dateString);
+      return date.toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric',
+        year: 'numeric'
+      });
+    }
+
+    // Generate placeholder content for vlog posts
+    function generateVlogContent(item) {
+      // For now, use placeholder content
+      // Later this will come from AI transcription/LLM
+      return {
+        title: `Vlog Entry - ${formatDateShort(item.dateCreated)}`,
+        text: `This is placeholder content for a vlog post. In the future, this will be generated from video transcription and processed by an LLM to create a markdown blog post. The video was created on ${formatDate(item.dateCreated)}.`
+      };
+    }
+
+    function renderFeed() {
+      const feed = document.getElementById('feed');
+      feed.innerHTML = '';
+
+      let currentPhotoGrid = null;
+
+      items.forEach((item, index) => {
+        if (isVideo(item)) {
+          // Close current photo grid if open
+          if (currentPhotoGrid) {
+            feed.appendChild(currentPhotoGrid);
+            currentPhotoGrid = null;
+          }
+
+          // Create vlog post card
+          const vlogPost = document.createElement('div');
+          vlogPost.className = 'vlog-post';
+          vlogPost.dataset.itemIndex = index;
+
+          const thumbnail = getBestThumbnail(item);
+          const vlogContent = generateVlogContent(item);
+
+          if (thumbnail && thumbnail.url) {
+            const thumbImg = document.createElement('img');
+            thumbImg.src = thumbnail.url;
+            thumbImg.className = 'vlog-thumbnail';
+            thumbImg.alt = '';
+            thumbImg.onerror = function() {
+              console.error('Failed to load video thumbnail:', thumbnail.url, item);
+              this.style.display = 'none';
+            };
+            vlogPost.appendChild(thumbImg);
+          } else {
+            console.warn('No thumbnail found for video item:', item);
+          }
+
+          const content = document.createElement('div');
+          content.className = 'vlog-content';
+
+          const title = document.createElement('h2');
+          title.className = 'vlog-title';
+          title.textContent = vlogContent.title;
+          content.appendChild(title);
+
+          const textPreview = document.createElement('div');
+          textPreview.className = 'vlog-text-preview';
+          textPreview.textContent = vlogContent.text;
+          content.appendChild(textPreview);
+
+          const meta = document.createElement('div');
+          meta.className = 'vlog-meta';
+
+          const date = document.createElement('div');
+          date.className = 'vlog-date';
+          date.textContent = formatDate(item.dateCreated);
+          meta.appendChild(date);
+
+          content.appendChild(meta);
+          vlogPost.appendChild(content);
+
+          vlogPost.addEventListener('click', () => openVlogLightbox(index));
+          feed.appendChild(vlogPost);
+        } else {
+          // Photo - add to current grid or create new grid
+          if (!currentPhotoGrid) {
+            currentPhotoGrid = document.createElement('div');
+            currentPhotoGrid.className = 'photo-grid';
+          }
+
+          const thumbnail = getBestThumbnail(item);
+          if (!thumbnail || !thumbnail.url) {
+            return; // Skip photos without thumbnails
+          }
+
+          const photoItem = document.createElement('div');
+          photoItem.className = 'photo-item';
+          photoItem.dataset.itemIndex = index;
+
+          const img = document.createElement('img');
+          img.src = thumbnail.url;
+          img.alt = '';
+          img.loading = 'lazy';
+          photoItem.appendChild(img);
+
+          photoItem.addEventListener('click', () => openPhotoLightbox(index));
+          currentPhotoGrid.appendChild(photoItem);
+        }
+      });
+
+      // Close any remaining photo grid
+      if (currentPhotoGrid) {
+        feed.appendChild(currentPhotoGrid);
+      }
+    }
+
+    function openPhotoLightbox(itemIndex) {
+      const item = items[itemIndex];
+      if (!item || isVideo(item)) return;
+
+      // Find index in photoItems array
+      currentPhotoIndex = photoItems.findIndex(photo => photo === item);
+      if (currentPhotoIndex === -1) return;
+
+      const thumbnail = getBestThumbnail(item);
+      if (!thumbnail || !thumbnail.url) return;
+
+      const lightbox = document.getElementById('lightbox');
+      const lightboxImage = document.getElementById('lightbox-image');
+      const lightboxInfo = document.getElementById('lightbox-info');
+
+      lightboxImage.src = thumbnail.url;
+      lightboxImage.style.display = 'block';
+
+      const caption = item.caption || '';
+      const date = formatDate(item.dateCreated);
+      lightboxInfo.innerHTML = caption 
+        ? `<div>${caption}</div><div style="margin-top: 4px; opacity: 0.8; font-size: 12px;">${date}</div>`
+        : `<div>${date}</div>`;
+
+      lightbox.classList.add('active');
+    }
+
+    function openVlogLightbox(itemIndex) {
+      const item = items[itemIndex];
+      if (!item || !isVideo(item)) return;
+
+      const video = getBestVideo(item);
+      if (!video || !video.url) return;
+
+      const vlogLightbox = document.getElementById('vlog-lightbox');
+      const vlogVideo = document.getElementById('vlog-lightbox-video');
+      const vlogTitle = document.getElementById('vlog-lightbox-title');
+      const vlogDate = document.getElementById('vlog-lightbox-date');
+      const vlogPost = document.getElementById('vlog-lightbox-post');
+
+      const vlogContent = generateVlogContent(item);
+
+      vlogVideo.src = video.url;
+      vlogTitle.textContent = vlogContent.title;
+      vlogDate.textContent = formatDate(item.dateCreated);
+      
+      // Convert placeholder text to HTML (simple version, later will be markdown)
+      vlogPost.innerHTML = `<p>${vlogContent.text.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}</p>`;
+
+      vlogLightbox.classList.add('active');
+      vlogVideo.play();
+    }
+
+    // Lightbox controls
+    document.getElementById('lightbox-close').addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.getElementById('lightbox').classList.remove('active');
+      document.getElementById('lightbox-video').pause();
+    });
+
+    document.getElementById('lightbox').addEventListener('click', (e) => {
+      if (e.target.id === 'lightbox') {
+        document.getElementById('lightbox').classList.remove('active');
+        document.getElementById('lightbox-video').pause();
+      }
+    });
+
+    document.getElementById('lightbox-prev').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (currentPhotoIndex > 0) {
+        currentPhotoIndex--;
+        const item = photoItems[currentPhotoIndex];
+        const itemIndex = items.findIndex(i => i === item);
+        if (itemIndex !== -1) {
+          openPhotoLightbox(itemIndex);
+        }
+      }
+    });
+
+    document.getElementById('lightbox-next').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (currentPhotoIndex < photoItems.length - 1) {
+        currentPhotoIndex++;
+        const item = photoItems[currentPhotoIndex];
+        const itemIndex = items.findIndex(i => i === item);
+        if (itemIndex !== -1) {
+          openPhotoLightbox(itemIndex);
+        }
+      }
+    });
+
+    document.getElementById('vlog-lightbox-close').addEventListener('click', () => {
+      const vlogLightbox = document.getElementById('vlog-lightbox');
+      const vlogVideo = document.getElementById('vlog-lightbox-video');
+      vlogLightbox.classList.remove('active');
+      vlogVideo.pause();
+      vlogVideo.src = '';
+    });
+
+    // Keyboard navigation
+    document.addEventListener('keydown', (e) => {
+      const lightbox = document.getElementById('lightbox');
+      const vlogLightbox = document.getElementById('vlog-lightbox');
+
+      if (lightbox.classList.contains('active')) {
+        if (e.key === 'Escape') {
+          lightbox.classList.remove('active');
+          document.getElementById('lightbox-video').pause();
+        } else if (e.key === 'ArrowLeft') {
+          document.getElementById('lightbox-prev').click();
+        } else if (e.key === 'ArrowRight') {
+          document.getElementById('lightbox-next').click();
+        }
+      } else if (vlogLightbox.classList.contains('active')) {
+        if (e.key === 'Escape') {
+          document.getElementById('vlog-lightbox-close').click();
+        }
+      }
+    });
+
+    // Touch swipe for photo lightbox
+    document.getElementById('lightbox').addEventListener('touchstart', (e) => {
+      touchStartX = e.changedTouches[0].screenX;
+    });
+
+    document.getElementById('lightbox').addEventListener('touchend', (e) => {
+      touchEndX = e.changedTouches[0].screenX;
+      handleSwipe();
+    });
+
+    function handleSwipe() {
+      const swipeThreshold = 50;
+      const diff = touchStartX - touchEndX;
+
+      if (Math.abs(diff) > swipeThreshold) {
+        if (diff > 0) {
+          // Swipe left - next
+          document.getElementById('lightbox-next').click();
+        } else {
+          // Swipe right - previous
+          document.getElementById('lightbox-prev').click();
+        }
+      }
+    }
+  </script>
+</body>
+</html>
+

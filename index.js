@@ -8,6 +8,7 @@ import sharp from 'sharp';
 import crypto from 'crypto';
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
+import schedule from 'node-schedule';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,22 +44,37 @@ const encrypt = encryptor(ENCRYPTION_SECRET);
 
 // Helper function to decrypt token if it's encrypted
 function decryptToken(token) {
+  if (!token) {
+    throw new Error('Token is required');
+  }
   if (token.startsWith('e-')) {
     try {
       const encrypted = token.substring(2); // Remove 'e-' prefix
-      return encrypt.decrypt(encrypted);
+      const decrypted = encrypt.decrypt(encrypted);
+      if (!decrypted) {
+        throw new Error('Decryption returned null');
+      }
+      return decrypted;
     } catch (error) {
-      throw new Error('Invalid encrypted token');
+      // Log the actual error for debugging
+      console.error('Decryption error details:', error.message || error);
+      throw new Error(`Invalid encrypted token: ${error.message || 'Decryption failed'}`);
     }
   }
   return token;
 }
 
 // Cache configuration
-const CACHE_TTL = parseInt(process.env.CACHE_TTL || '7200000', 10); // Default: 2 hours in milliseconds
+const CACHE_TTL = parseInt(process.env.CACHE_TTL || '3600000', 10); // Default: 1 hour in milliseconds
 
 // In-memory reloading state (small, can stay in memory)
 const reloadingState = new Map(); // token -> boolean
+
+// Track recently accessed tokens for background refresh
+// Maps originalToken -> { lastAccessed: timestamp, decryptedToken: string }
+const recentlyAccessedTokens = new Map();
+const MAX_TRACKED_TOKENS = parseInt(process.env.MAX_TRACKED_TOKENS || '100', 10);
+const TOKEN_ACCESS_TTL = parseInt(process.env.TOKEN_ACCESS_TTL || '86400000', 10); // Default: 24 hours in milliseconds
 
 // Sanitize token for use as filename
 function sanitizeToken(token) {
@@ -337,16 +353,20 @@ app.get('/api/image/:secureId.jpg', async (req, res) => {
 
     const imageFile = path.join(IMAGES_CACHE_DIR, `${secureId}.jpg`);
     
-    // Check if cached image exists and is fresh
+    // Check if cached image exists
+    let cachedImageExists = false;
+    let cachedStats = null;
     try {
-      const stats = await fs.stat(imageFile);
-      const age = Date.now() - stats.mtimeMs;
+      cachedStats = await fs.stat(imageFile);
+      cachedImageExists = true;
+      const age = Date.now() - cachedStats.mtimeMs;
       
+      // If cached image is fresh, serve it directly
       if (age < CACHE_TTL) {
         // Generate ETag
-        const etag = `"${secureId}-${stats.mtimeMs}"`;
+        const etag = `"${secureId}-${cachedStats.mtimeMs}"`;
         res.set('ETag', etag);
-        res.set('Last-Modified', stats.mtime.toUTCString());
+        res.set('Last-Modified', cachedStats.mtime.toUTCString());
         
         // Check if client has cached version (If-None-Match header)
         const ifNoneMatch = req.get('If-None-Match');
@@ -370,18 +390,67 @@ app.get('/api/image/:secureId.jpg', async (req, res) => {
         res.set('Cache-Control', 'public, max-age=31536000, immutable'); // Cache for 1 year
         return res.send(imageBuffer);
       }
+      // If cached image exists but is stale, we'll try to refresh it below
+      // but will fall back to serving stale cache if refresh fails
     } catch (error) {
       // File doesn't exist or can't be read, continue to fetch
+      cachedImageExists = false;
     }
 
     // Look up original URL from secure ID
     const originalUrl = await getImageUrl(secureId);
     if (!originalUrl) {
+      // Check if we have a cached image file even if mapping is expired
+      if (cachedImageExists && cachedStats) {
+        try {
+          const cachedBuffer = await fs.readFile(imageFile);
+          console.log(`Serving expired mapping for ${secureId}, but cached image exists`);
+          // Remove any default no-cache headers Express might set
+          res.removeHeader('Cache-Control');
+          res.removeHeader('Pragma');
+          res.removeHeader('Expires');
+          res.set('Content-Type', 'image/jpeg');
+          res.set('Cache-Control', 'public, max-age=31536000, immutable');
+          res.set('ETag', `"${secureId}-${cachedStats.mtimeMs}"`);
+          res.set('Last-Modified', cachedStats.mtime.toUTCString());
+          return res.send(cachedBuffer);
+        } catch (error) {
+          // Error reading cached file, return 404
+          return res.status(404).json({ error: 'Image not found or expired' });
+        }
+      }
+      // No cached file either, return 404
       return res.status(404).json({ error: 'Image not found or expired' });
     }
 
     // Strip EXIF and cache to disk
-    const cleanedBuffer = await stripExifLocation(originalUrl);
+    let cleanedBuffer;
+    try {
+      cleanedBuffer = await stripExifLocation(originalUrl);
+    } catch (error) {
+      // If fetching fails (e.g., URL expired), try to serve cached image if available
+      console.error(`Failed to fetch image from iCloud for ${secureId}, trying cached version:`, error.message);
+      if (cachedImageExists && cachedStats) {
+        try {
+          const cachedBuffer = await fs.readFile(imageFile);
+          console.log(`Serving cached image for ${secureId} due to fetch error`);
+          // Remove any default no-cache headers Express might set
+          res.removeHeader('Cache-Control');
+          res.removeHeader('Pragma');
+          res.removeHeader('Expires');
+          res.set('Content-Type', 'image/jpeg');
+          res.set('Cache-Control', 'public, max-age=31536000, immutable');
+          res.set('ETag', `"${secureId}-${cachedStats.mtimeMs}"`);
+          res.set('Last-Modified', cachedStats.mtime.toUTCString());
+          return res.send(cachedBuffer);
+        } catch (cacheError) {
+          // Error reading cached file, continue to throw original error
+        }
+      }
+      // No cached file or error reading it, return error
+      throw error; // Throw original fetch error
+    }
+    
     await fs.writeFile(imageFile, cleanedBuffer);
 
     // Remove any default no-cache headers Express might set
@@ -436,11 +505,15 @@ async function rewriteImageUrls(data, originalToken) {
           return;
         }
         // Only proxy images, not videos (videos don't have EXIF data)
-        if (derivative.url.includes('.mp4') || derivative.url.includes('.MP4')) {
-          // Keep video URLs as-is
+        // Check case-insensitively for video files
+        const urlLower = derivative.url.toLowerCase();
+        if (urlLower.includes('.mp4')) {
+          // Keep video file URLs as-is (but video thumbnail JPGs should still be proxied)
           return;
         }
         // Store original URL securely and get opaque ID
+        // This includes all image URLs (photos and video thumbnail JPGs)
+        // Video thumbnail JPGs will be processed the same as photo JPGs
         urlPromises.push(storeImageUrl(derivative.url));
         urlIndices.push({ photoIndex, size });
       }
@@ -508,14 +581,25 @@ app.get('/api/album/:token', async (req, res) => {
 
     // Decrypt token if it's encrypted (starts with 'e-')
     const originalToken = token;
+    let decryptedToken;
     try {
-      token = decryptToken(token);
+      decryptedToken = decryptToken(token);
     } catch (error) {
+      console.error('Token decryption error:', error.message, 'Token:', token);
       return res.status(400).json({ 
         error: 'Invalid encrypted token', 
         message: error.message 
       });
     }
+
+    // Ensure we have a valid token
+    if (!decryptedToken) {
+      console.error('Decrypted token is null/undefined. Original token:', originalToken);
+      return res.status(400).json({ error: 'Invalid token - decryption returned null' });
+    }
+
+    // Capture decrypted token in const for async closures
+    const finalDecryptedToken = decryptedToken;
 
     // Use original token for cache key to avoid collisions
     const cacheKey = originalToken;
@@ -542,7 +626,7 @@ app.get('/api/album/:token', async (req, res) => {
           // Reload in background
           (async () => {
             try {
-              const freshData = await getImages(token);
+              const freshData = await getImages(finalDecryptedToken);
               const freshRewritten = await rewriteImageUrls(freshData, originalToken);
               await setCachedData(cacheKey, freshRewritten, false);
               console.log(`Background reload complete for album: ${originalToken}`);
@@ -554,6 +638,10 @@ app.get('/api/album/:token', async (req, res) => {
           return;
         } else {
           cachedData.reloading = false;
+          
+          // Track this token for background refresh
+          trackTokenForRefresh(originalToken, finalDecryptedToken);
+          
           return res.json(cachedData);
         }
       }
@@ -567,12 +655,17 @@ app.get('/api/album/:token', async (req, res) => {
         // Return stale data immediately with reloading flag
         const rewritten = await rewriteImageUrls(cachedData, originalToken);
         rewritten.reloading = true;
+        
+        // Track this token for background refresh
+        trackTokenForRefresh(originalToken, finalDecryptedToken);
+        
         res.json(rewritten);
         
         // Reload in background (don't await)
         (async () => {
           try {
-            const freshData = await getImages(token);
+            console.log('Decrypted token:', finalDecryptedToken);
+            const freshData = await getImages(finalDecryptedToken);
             const freshRewritten = await rewriteImageUrls(freshData, originalToken);
             await setCachedData(cacheKey, freshRewritten, false);
             console.log(`Background reload complete for album: ${originalToken}`);
@@ -587,13 +680,17 @@ app.get('/api/album/:token', async (req, res) => {
         console.log(`Cache hit for album: ${originalToken}`);
         const rewritten = await rewriteImageUrls(cachedData, originalToken);
         rewritten.reloading = false;
+        
+        // Track this token for background refresh
+        trackTokenForRefresh(originalToken, finalDecryptedToken);
+        
         return res.json(rewritten);
       }
     }
 
     // Cache miss - fetch from iCloud
     console.log(`Cache miss for album: ${originalToken}, fetching from iCloud...`);
-    const data = await getImages(token);
+    const data = await getImages(finalDecryptedToken);
     
     // Store original data in cache (before rewriting URLs)
     await setCachedData(cacheKey, data, false);
@@ -601,6 +698,9 @@ app.get('/api/album/:token', async (req, res) => {
     // Rewrite URLs to use proxy (strip EXIF) for response
     const rewritten = await rewriteImageUrls(data, originalToken);
     rewritten.reloading = false;
+    
+    // Track this token for background refresh
+    trackTokenForRefresh(originalToken, finalDecryptedToken);
     
     res.json(rewritten);
   } catch (error) {
@@ -610,6 +710,83 @@ app.get('/api/album/:token', async (req, res) => {
       message: error.message 
     });
   }
+});
+
+// Track token for background refresh
+function trackTokenForRefresh(originalToken, decryptedToken) {
+  // Update or add token to tracking map
+  recentlyAccessedTokens.set(originalToken, {
+    lastAccessed: Date.now(),
+    decryptedToken: decryptedToken
+  });
+  
+  // Clean up old tokens if we exceed max
+  if (recentlyAccessedTokens.size > MAX_TRACKED_TOKENS) {
+    const now = Date.now();
+    const entries = Array.from(recentlyAccessedTokens.entries());
+    entries.sort((a, b) => a[1].lastAccessed - b[1].lastAccessed);
+    
+    // Remove oldest tokens until we're under the limit
+    const toRemove = entries.slice(0, entries.length - MAX_TRACKED_TOKENS);
+    toRemove.forEach(([token]) => recentlyAccessedTokens.delete(token));
+  }
+}
+
+// Background refresh function for a single token
+async function refreshTokenInBackground(originalToken, decryptedToken) {
+  try {
+    const freshData = await getImages(decryptedToken);
+    const freshRewritten = await rewriteImageUrls(freshData, originalToken);
+    await setCachedData(originalToken, freshRewritten, false);
+    console.log(`Background refresh complete for album: ${originalToken}`);
+    return true;
+  } catch (error) {
+    console.error(`Background refresh failed for album ${originalToken}:`, error.message);
+    return false;
+  }
+}
+
+// Scheduled job to refresh recently accessed tokens
+schedule.scheduleJob('*/30 * * * *', async () => {
+  // Run every 30 minutes
+  const now = Date.now();
+  const tokensToRefresh = [];
+  
+  // Collect tokens that should be refreshed (recently accessed and not too old)
+  for (const [originalToken, info] of recentlyAccessedTokens.entries()) {
+    const age = now - info.lastAccessed;
+    if (age < TOKEN_ACCESS_TTL) {
+      tokensToRefresh.push({ originalToken, decryptedToken: info.decryptedToken });
+    } else {
+      // Remove old tokens
+      recentlyAccessedTokens.delete(originalToken);
+    }
+  }
+  
+  if (tokensToRefresh.length === 0) {
+    console.log('No tokens to refresh');
+    return;
+  }
+  
+  console.log(`Starting background refresh for ${tokensToRefresh.length} token(s)...`);
+  
+  // Refresh tokens in parallel (but limit concurrency to avoid overwhelming iCloud)
+  const BATCH_SIZE = 5;
+  for (let i = 0; i < tokensToRefresh.length; i += BATCH_SIZE) {
+    const batch = tokensToRefresh.slice(i, i + BATCH_SIZE);
+    await Promise.all(
+      batch.map(({ originalToken, decryptedToken }) =>
+        refreshTokenInBackground(originalToken, decryptedToken)
+      )
+    );
+    
+    // Small delay between batches to be respectful to iCloud API
+    if (i + BATCH_SIZE < tokensToRefresh.length) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+  
+  console.log(`Background refresh completed for ${tokensToRefresh.length} token(s)`);
 });
 
 // Serve landing page at root
@@ -632,6 +809,16 @@ app.use(express.static(path.join(__dirname, 'public'), {
     }
   }
 }));
+
+// Serve feed.html for feed routes (/feed/:token)
+app.get('/feed/:token', (req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    return next();
+  }
+  
+  // Serve feed.html - frontend will handle encrypted tokens via API
+  res.sendFile(path.join(__dirname, 'public', 'feed.html'));
+});
 
 // Serve index.html for album routes (/:albumId)
 // Exclude /api paths and file extensions to avoid conflicts

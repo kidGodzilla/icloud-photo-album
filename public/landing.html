@@ -341,18 +341,31 @@
     </section>
 
     <section class="section">
+      <h2>How It Works</h2>
+      <p>The modal script creates a full-screen overlay with an iframe that loads your album viewer. The album viewer fetches photos from iCloud and displays them in a beautiful, responsive interface.</p>
+      
+      <p><strong>Album Token:</strong> To get an album token, share an iCloud photo album and extract the token from the share URL. The token is the unique identifier in the URL.</p>
+      
+      <p><strong>Encrypted Tokens:</strong> Encrypted tokens start with <code>e-</code> and hide the original album token. The backend automatically decrypts them when used. Use the token encryption tool above to convert public tokens to private ones.</p>
+      
+      <p><strong>Privacy & Security:</strong> All images are proxied through the server with EXIF location data automatically stripped. Original iCloud URLs are never exposed to clients. Images are optimized for web display (resized and compressed) for faster loading.</p>
+      
+      <p><strong>Video Support:</strong> The viewer supports both photos and videos from iCloud shared albums.</p>
+    </section>
+
+    <section class="section">
       <h2>Usage Examples</h2>
       
       <h3>As a Button</h3>
       <div class="code-block">
-<code>&lt;button onclick="icloudAlbumModal('e-a67c44f800be876eb34ccf9beeefc59009a9ea0839342bd0a5787a1ff377558c1202d6b0b847b81ea801cb23df320f5eUv0uFyNZ9VVnyOjVocAKz+VbVoD1ZWv+u1Ybn6V8ctk=')"&gt;
+<code>&lt;button onclick="icloudAlbumModal('e-dc429eb14883381124c7697c5f08dca63e3cddba76503acfc102ceb301d582471113fa4b8e561a9e8fa2bf307e2c7992qShPYILQiYdqLvmj2QTtrVGQm+tczGyFqTpz2rIwQlg=')"&gt;
   View Photos
 &lt;/button&gt;</code>
       </div>
 
       <h3>As a Link</h3>
       <div class="code-block">
-<code>&lt;a href="#" onclick="icloudAlbumModal('e-a67c44f800be876eb34ccf9beeefc59009a9ea0839342bd0a5787a1ff377558c1202d6b0b847b81ea801cb23df320f5eUv0uFyNZ9VVnyOjVocAKz+VbVoD1ZWv+u1Ybn6V8ctk='); return false;"&gt;
+<code>&lt;a href="#" onclick="icloudAlbumModal('e-dc429eb14883381124c7697c5f08dca63e3cddba76503acfc102ceb301d582471113fa4b8e561a9e8fa2bf307e2c7992qShPYILQiYdqLvmj2QTtrVGQm+tczGyFqTpz2rIwQlg='); return false;"&gt;
   View Photos
 &lt;/a&gt;</code>
       </div>
@@ -361,7 +374,7 @@
       <div class="code-block">
 <code>&lt;script&gt;
   // Open modal programmatically
-  icloudAlbumModal('e-a67c44f800be876eb34ccf9beeefc59009a9ea0839342bd0a5787a1ff377558c1202d6b0b847b81ea801cb23df320f5eUv0uFyNZ9VVnyOjVocAKz+VbVoD1ZWv+u1Ybn6V8ctk=');
+  icloudAlbumModal('e-dc429eb14883381124c7697c5f08dca63e3cddba76503acfc102ceb301d582471113fa4b8e561a9e8fa2bf307e2c7992qShPYILQiYdqLvmj2QTtrVGQm+tczGyFqTpz2rIwQlg=');
 &lt;/script&gt;</code>
       </div>
     </section>
@@ -414,26 +427,13 @@
         </button>
       </div>
     </section>
-
-    <section class="section">
-      <h2>How It Works</h2>
-      <p>The modal script creates a full-screen overlay with an iframe that loads your album viewer. The album viewer fetches photos from iCloud and displays them in a beautiful, responsive interface.</p>
-      
-      <p><strong>Album Token:</strong> To get an album token, share an iCloud photo album and extract the token from the share URL. The token is the unique identifier in the URL.</p>
-      
-      <p><strong>Encrypted Tokens:</strong> Encrypted tokens start with <code>e-</code> and hide the original album token. The backend automatically decrypts them when used. Use the token encryption tool above to convert public tokens to private ones.</p>
-      
-      <p><strong>Privacy & Security:</strong> All images are proxied through the server with EXIF location data automatically stripped. Original iCloud URLs are never exposed to clients. Images are optimized for web display (resized and compressed) for faster loading.</p>
-      
-      <p><strong>Video Support:</strong> The viewer supports both photos and videos from iCloud shared albums.</p>
-    </section>
   </div>
 
   <script>
     // Build URLs based on current hostname and protocol
     const baseUrl = window.location.origin;
     const scriptUrl = `${baseUrl}/icloud-photo-album-modal.js`;
-    const exampleToken = 'e-a67c44f800be876eb34ccf9beeefc59009a9ea0839342bd0a5787a1ff377558c1202d6b0b847b81ea801cb23df320f5eUv0uFyNZ9VVnyOjVocAKz+VbVoD1ZWv+u1Ybn6V8ctk=';
+    const exampleToken = 'e-dc429eb14883381124c7697c5f08dca63e3cddba76503acfc102ceb301d582471113fa4b8e561a9e8fa2bf307e2c7992qShPYILQiYdqLvmj2QTtrVGQm+tczGyFqTpz2rIwQlg=';
 
     // Update script tag
     document.getElementById('script-tag').innerHTML = `<code>&lt;script src="${scriptUrl}"&gt;&lt;/script&gt;</code>`;
@@ -536,7 +536,7 @@
       return null;
     }
 
-    function convertUrl() {
+    async function convertUrl() {
       const input = document.getElementById('icloud-url-input');
       const url = input.value.trim();
       
@@ -551,10 +551,32 @@
         return;
       }
 
-      currentToken = token;
-      currentViewerUrl = `${baseUrl}/${token}`;
+      // Encrypt the token
+      let encryptedToken = token;
+      try {
+        const response = await fetch(`${baseUrl}/api/encrypt-token`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ token }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          encryptedToken = data.encryptedToken;
+        } else {
+          console.warn('Failed to encrypt token, using unencrypted token');
+        }
+      } catch (error) {
+        console.error('Error encrypting token:', error);
+        // Continue with unencrypted token
+      }
+
+      currentToken = encryptedToken;
+      currentViewerUrl = `${baseUrl}/${encryptedToken}`;
       const scriptTag = '<script src="' + scriptUrl + '"><\/script>';
-      const buttonTag = '<button onclick="icloudAlbumModal(\'' + token + '\')">View Photos</button>';
+      const buttonTag = '<button onclick="icloudAlbumModal(\'' + encryptedToken + '\')">View Photos</button>';
       currentEmbedCode = scriptTag + '\n' + buttonTag;
 
       document.getElementById('viewer-url-display').textContent = currentViewerUrl;

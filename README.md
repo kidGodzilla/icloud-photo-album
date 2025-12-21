@@ -28,7 +28,7 @@ Create a `.env` file (optional):
 
 ```env
 PORT=3000
-CACHE_TTL=7200000              # Cache TTL in milliseconds (default: 2 hours)
+CACHE_TTL=3600000              # Cache TTL in milliseconds (default: 1 hour)
 CACHE_DIR=./cache              # Cache directory (default: ./cache)
 ENCRYPTION_SECRET=your-secret  # Secret for token encryption (required for production)
 MAX_IMAGE_WIDTH=1920           # Maximum image width in pixels (default: 1920)
@@ -184,7 +184,7 @@ Cache structure:
 - `cache/images/` - Processed images (EXIF stripped, optimized)
 - `cache/mappings/` - Secure ID to original URL mappings
 
-Cache entries expire after the configured TTL (default: 2 hours). Images are cached with proper HTTP headers for browser caching.
+Cache entries expire after the configured TTL (default: 1 hour). Images are cached with proper HTTP headers for browser caching. The stale-while-revalidate strategy means users always get immediate responses, with fresh data loading in the background.
 
 ## Keyboard Shortcuts
 
