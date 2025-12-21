@@ -1427,7 +1427,12 @@ Please use the following similarity value for this request: 89.`;
       ]
     });
 
-    return response.choices[0].message.content.trim();
+    let blogContent = response.choices[0].message.content.trim();
+    
+    // Strip markdown code fences if present (sometimes LLM wraps response despite instructions)
+    blogContent = blogContent.replace(/^```markdown\n?/i, '').replace(/^```\n?/m, '').replace(/\n?```$/m, '').trim();
+    
+    return blogContent;
   } catch (error) {
     console.error('OpenAI blogify error:', error);
     throw error;
