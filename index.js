@@ -1115,56 +1115,78 @@ async function getVideoDuration(videoUrl) {
 }
 
 // Extract audio from video using ffmpeg
+// Downloads video to temp file first to avoid streaming issues
 async function extractAudioFromVideo(videoUrl, outputPath) {
-  return new Promise((resolve, reject) => {
-    // Validate video URL before processing
-    if (!videoUrl || typeof videoUrl !== 'string' || !videoUrl.startsWith('http')) {
-      reject(new Error(`Invalid video URL: ${videoUrl}`));
-      return;
-    }
+  // Validate video URL before processing
+  if (!videoUrl || typeof videoUrl !== 'string' || !videoUrl.startsWith('http')) {
+    throw new Error(`Invalid video URL: ${videoUrl}`);
+  }
 
-    let timeoutId;
-    const timeout = 300000; // 5 minute timeout
-    
-    const command = ffmpeg(videoUrl)
-      .noVideo()
-      .audioCodec('pcm_s16le')
-      .audioFrequency(16000) // Whisper requires 16kHz
-      .audioChannels(1) // Mono
-      .format('wav')
-      .on('start', (cmd) => {
-        console.log('Extracting audio with ffmpeg:', cmd);
-        // Set timeout
-        timeoutId = setTimeout(() => {
-          command.kill('SIGTERM');
-          reject(new Error('FFmpeg timeout after 5 minutes'));
-        }, timeout);
-      })
-      .on('error', (err) => {
-        if (timeoutId) clearTimeout(timeoutId);
-        console.error('FFmpeg error:', err);
-        // Check if it's a SIGSEGV or other fatal error
-        if (err.message && (err.message.includes('SIGSEGV') || err.message.includes('killed'))) {
-          console.error(`FFmpeg crashed (SIGSEGV) for URL: ${videoUrl}`);
-          // Try to provide more helpful error
-          reject(new Error(`FFmpeg process crashed. This may indicate an incompatible binary, corrupted video, or unsupported format. URL: ${videoUrl.substring(0, 100)}...`));
-        } else {
-          reject(err);
-        }
-      })
-      .on('end', () => {
-        if (timeoutId) clearTimeout(timeoutId);
-        console.log('Audio extraction complete');
-        resolve(outputPath);
-      });
-    
-    try {
-      command.save(outputPath);
-    } catch (error) {
-      if (timeoutId) clearTimeout(timeoutId);
-      reject(error);
+  // Download video to temp file first (more reliable than streaming)
+  const tempVideoPath = outputPath.replace('.wav', '.mp4');
+  
+  try {
+    // Download video file
+    console.log(`Downloading video from: ${videoUrl.substring(0, 80)}...`);
+    const response = await fetch(videoUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to download video: ${response.status} ${response.statusText}`);
     }
-  });
+    
+    const arrayBuffer = await response.arrayBuffer();
+    await fs.writeFile(tempVideoPath, Buffer.from(arrayBuffer));
+    console.log(`Video downloaded to: ${tempVideoPath}`);
+
+    // Now extract audio from local file
+    return new Promise((resolve, reject) => {
+      let timeoutId;
+      const timeout = 300000; // 5 minute timeout
+      
+      const command = ffmpeg(tempVideoPath)
+        .noVideo()
+        .audioCodec('pcm_s16le')
+        .audioFrequency(16000) // Whisper requires 16kHz
+        .audioChannels(1) // Mono
+        .format('wav')
+        .on('start', (cmd) => {
+          console.log('Extracting audio with ffmpeg from local file');
+          // Set timeout
+          timeoutId = setTimeout(() => {
+            command.kill('SIGTERM');
+            reject(new Error('FFmpeg timeout after 5 minutes'));
+          }, timeout);
+        })
+        .on('error', (err) => {
+          if (timeoutId) clearTimeout(timeoutId);
+          console.error('FFmpeg error:', err);
+          // Check if it's a SIGSEGV or other fatal error
+          if (err.message && (err.message.includes('SIGSEGV') || err.message.includes('killed'))) {
+            console.error(`FFmpeg crashed (SIGSEGV) for local file: ${tempVideoPath}`);
+            reject(new Error(`FFmpeg process crashed. This may indicate an incompatible binary or corrupted video file.`));
+          } else {
+            reject(err);
+          }
+        })
+        .on('end', () => {
+          if (timeoutId) clearTimeout(timeoutId);
+          console.log('Audio extraction complete');
+          // Clean up temp video file
+          fs.unlink(tempVideoPath).catch(() => {}); // Don't wait, just clean up in background
+          resolve(outputPath);
+        });
+      
+      try {
+        command.save(outputPath);
+      } catch (error) {
+        if (timeoutId) clearTimeout(timeoutId);
+        reject(error);
+      }
+    });
+  } catch (downloadError) {
+    // Clean up temp file if download failed
+    await fs.unlink(tempVideoPath).catch(() => {});
+    throw downloadError;
+  }
 }
 
 // Transcribe audio using whisper.cpp
