@@ -94,13 +94,12 @@ let ffprobePath = null;
     const pathToFfmpeg = await import('ffmpeg-static');
     const pathToFfprobe = await import('ffprobe-static');
     ffmpegPath = pathToFfmpeg.default;
-    // ffprobe-static exports differently - check both possibilities and ensure we get a string
-    const ffprobeRaw = pathToFfprobe.default?.ffprobePath || pathToFfprobe.ffprobePath || pathToFfprobe.default;
-    // If it's still an object, try to extract the path string
-    if (typeof ffprobeRaw === 'object' && ffprobeRaw !== null) {
-      ffprobePath = ffprobeRaw.ffprobePath || ffprobeRaw.default || null;
-    } else {
-      ffprobePath = ffprobeRaw;
+    // ffprobe-static exports an object with a 'path' property
+    const ffprobeModule = pathToFfprobe.default || pathToFfprobe;
+    if (ffprobeModule && typeof ffprobeModule === 'object') {
+      ffprobePath = ffprobeModule.path || ffprobeModule.ffprobePath;
+    } else if (typeof ffprobeModule === 'string') {
+      ffprobePath = ffprobeModule;
     }
     if (ffmpegPath) {
       // Verify the ffmpeg binary exists and is executable
@@ -1225,10 +1224,8 @@ async function getVideoDuration(videoUrl) {
     
     // Ensure ffprobePath is a string (handle object exports)
     let ffprobeExecutable = ffprobePath;
-    if (typeof ffprobePath === 'object' && ffprobePath.ffprobePath) {
-      ffprobeExecutable = ffprobePath.ffprobePath;
-    } else if (typeof ffprobePath === 'object' && ffprobePath.default) {
-      ffprobeExecutable = typeof ffprobePath.default === 'string' ? ffprobePath.default : ffprobePath.default.ffprobePath;
+    if (typeof ffprobePath === 'object' && ffprobePath !== null) {
+      ffprobeExecutable = ffprobePath.path || ffprobePath.ffprobePath || null;
     }
     
     if (!ffprobeExecutable || typeof ffprobeExecutable !== 'string') {
