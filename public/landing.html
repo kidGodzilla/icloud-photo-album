@@ -282,7 +282,7 @@
       
       <div id="url-conversion-result" style="display: none; margin-top: 20px;">
         <div style="background: rgba(255,255,255,0.15); border-radius: 6px; padding: 20px; margin-bottom: 15px;">
-          <h3 style="color: white; margin-top: 0;">Shareable Viewer URL</h3>
+          <h3 style="color: white; margin-top: 0;">Shareable Photo Gallery URL</h3>
           <div class="code-block" style="background: rgba(255,255,255,0.2); border-color: rgba(255,255,255,0.3); margin: 10px 0;">
             <code id="viewer-url-display" style="color: white; word-break: break-all;"></code>
           </div>
@@ -292,6 +292,20 @@
             style="width: 100%; background: white; color: #667eea; margin-top: 10px;"
           >
             Copy Viewer URL
+          </button>
+        </div>
+
+        <div style="background: rgba(255,255,255,0.15); border-radius: 6px; padding: 20px; margin-bottom: 15px;">
+          <h3 style="color: white; margin-top: 0;">Vlog Feed URL</h3>
+          <div class="code-block" style="background: rgba(255,255,255,0.2); border-color: rgba(255,255,255,0.3); margin: 10px 0;">
+            <code id="feed-url-display" style="color: white; word-break: break-all;"></code>
+          </div>
+          <button 
+            class="demo-button" 
+            onclick="copyFeedUrl(this)"
+            style="width: 100%; background: white; color: #667eea; margin-top: 10px;"
+          >
+            Copy Feed URL
           </button>
         </div>
 
@@ -517,6 +531,7 @@
 
     // URL conversion functions
     let currentViewerUrl = '';
+    let currentFeedUrl = '';
     let currentEmbedCode = '';
     let currentToken = '';
 
@@ -583,11 +598,13 @@
 
       currentToken = encryptedToken;
       currentViewerUrl = `${baseUrl}/${encryptedToken}`;
+      currentFeedUrl = `${baseUrl}/feed/${encryptedToken}`;
       const scriptTag = '<script src="' + scriptUrl + '"><\/script>';
       const buttonTag = '<button onclick="icloudAlbumModal(\'' + encryptedToken + '\')">View Photos</button>';
       currentEmbedCode = scriptTag + '\n' + buttonTag;
 
       document.getElementById('viewer-url-display').textContent = currentViewerUrl;
+      document.getElementById('feed-url-display').textContent = currentFeedUrl;
       document.getElementById('embed-code-display').textContent = currentEmbedCode;
       document.getElementById('url-conversion-result').style.display = 'block';
       
@@ -607,6 +624,21 @@
       }).catch((err) => {
         console.error('Failed to copy URL:', err);
         alert('Failed to copy URL');
+      });
+    }
+
+    function copyFeedUrl(btn) {
+      if (!currentFeedUrl) return;
+      
+      const originalText = btn.textContent;
+      navigator.clipboard.writeText(currentFeedUrl).then(() => {
+        btn.textContent = 'Copied!';
+        setTimeout(() => {
+          btn.textContent = originalText;
+        }, 2000);
+      }).catch((err) => {
+        console.error('Failed to copy feed URL:', err);
+        alert('Failed to copy feed URL');
       });
     }
 
