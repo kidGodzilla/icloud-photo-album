@@ -6,6 +6,14 @@
   <meta name="theme-color" content="#007AFF">
   <meta name="description" content="Vlog feed view of iCloud shared photo albums with mixed photo and video content.">
   <title>Feed View</title>
+
+  <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="shortcut icon" href="/favicon.ico" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-title" content="Photo Album" />
+  <link rel="manifest" href="/site.webmanifest" />
+
   <style>
     * {
       margin: 0;
@@ -501,6 +509,11 @@
       z-index: 10;
       backdrop-filter: blur(4px);
       -webkit-backdrop-filter: blur(4px);
+      display: none; /* Will be shown via JavaScript when native captions aren't available */
+    }
+    
+    /* Hide native WebVTT captions when using custom overlay */
+    .vlog-lightbox-video.using-custom-captions video::cue {
       display: none !important;
     }
 
@@ -1383,13 +1396,24 @@
       track.default = true;
       videoElement.appendChild(track);
       
-      // Enable text tracks
-      if (videoElement.textTracks.length > 0) {
-        videoElement.textTracks[0].mode = 'showing';
-      }
+      // Detect mobile Safari (which often doesn't show native captions well)
+      const isMobileSafari = /iPhone|iPad|iPod/.test(navigator.userAgent) && !window.MSStream;
       
-      // Also create a custom caption overlay for better styling control
-      if (captionsDiv) {
+      // Function to set up custom caption overlay
+      function setupCustomCaptions() {
+        if (!captionsDiv) return;
+        
+        // Mark container as using custom captions (for CSS)
+        const videoContainer = videoElement.closest('.vlog-lightbox-video');
+        if (videoContainer) {
+          videoContainer.classList.add('using-custom-captions');
+        }
+        
+        // Hide native captions by setting track mode to hidden
+        if (videoElement.textTracks.length > 0) {
+          videoElement.textTracks[0].mode = 'hidden';
+        }
+        
         const updateCaptions = () => {
           const currentTime = videoElement.currentTime * 1000; // Convert to ms
           
@@ -1427,6 +1451,48 @@
           URL.revokeObjectURL(vttUrl);
         });
       }
+      
+      // Wait for track to load, then decide which caption system to use
+      track.addEventListener('load', () => {
+        const textTrack = videoElement.textTracks[0];
+        
+        if (isMobileSafari) {
+          // On mobile Safari, always use custom overlay for better control and touch compatibility
+          setupCustomCaptions();
+        } else {
+          // On desktop Chrome/Firefox, try native captions first
+          if (textTrack && textTrack.cues && textTrack.cues.length > 0) {
+            textTrack.mode = 'showing';
+            
+            // Check after a short delay if native captions are actually displaying
+            setTimeout(() => {
+              // If native captions are working (activeCues exist), keep them and hide custom overlay
+              // Otherwise, fall back to custom overlay
+              if (textTrack.activeCues && textTrack.activeCues.length > 0) {
+                // Native captions are working, ensure custom overlay is hidden
+                const videoContainer = videoElement.closest('.vlog-lightbox-video');
+                if (videoContainer) {
+                  videoContainer.classList.remove('using-custom-captions');
+                }
+                if (captionsDiv) {
+                  captionsDiv.style.display = 'none';
+                }
+              } else {
+                // Native captions not working, use custom overlay
+                setupCustomCaptions();
+              }
+            }, 500);
+          } else {
+            // No cues loaded, use custom overlay
+            setupCustomCaptions();
+          }
+        }
+      });
+      
+      // Fallback: if track doesn't load, use custom captions
+      track.addEventListener('error', () => {
+        setupCustomCaptions();
+      });
     }
 
     async function openVlogLightbox(itemIndex) {
