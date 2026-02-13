@@ -446,11 +446,31 @@ async function storeImageUrl(originalUrl) {
     if (lookup.url === originalUrl && lookup.secureId) {
       // Check if the mapping file still exists
       const mappingFile = path.join(MAPPINGS_CACHE_DIR, `${lookup.secureId}.json`);
-      if (existsSync(mappingFile)) {
+      
+      try {
+        const mappingContent = await fs.readFile(mappingFile, 'utf-8');
+        const mapping = JSON.parse(mappingContent);
+        
+        // Check if we need to refresh the timestamp (e.g. if older than 1 hour)
+        // This keeps frequently accessed images from expiring
+        const age = Date.now() - mapping.timestamp;
+        if (age > 60 * 60 * 1000) { // 1 hour
+          mapping.timestamp = Date.now();
+          // Fire and forget update (don't await to avoid slowing down request)
+          fs.writeFile(mappingFile, JSON.stringify(mapping, null, 2), 'utf-8').catch(err => {
+            console.error('Error updating mapping timestamp:', err);
+          });
+          
+          // Also update lookup timestamp
+          lookup.timestamp = Date.now();
+          fs.writeFile(lookupFile, JSON.stringify(lookup, null, 2), 'utf-8').catch(() => {});
+        }
+        
         // Mapping exists, return existing secure ID
         return lookup.secureId;
+      } catch (e) {
+        // Mapping file doesn't exist or is invalid, will create new one below
       }
-      // Mapping file doesn't exist, will create new one below
     }
   } catch (error) {
     // Lookup file doesn't exist, will create new mapping below
