@@ -1,22 +1,24 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#007AFF">
-  <meta name="description" content="View iCloud shared photo albums in a beautiful, responsive gallery with keyboard navigation and dark mode support.">
+  <meta name="description"
+    content="View iCloud shared photo albums in a beautiful, responsive gallery with keyboard navigation and dark mode support.">
   <meta name="keywords" content="icloud, photo album, gallery, photos, shared album">
   <meta name="application-name" content="Photo Album">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta id="apple-mobile-web-app-title" name="apple-mobile-web-app-title" content="Photo Album">
-  
+
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website">
   <meta property="og:title" content="iCloud Photo Album">
   <meta property="og:description" content="View iCloud shared photo albums">
-  
+
   <!-- Twitter -->
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="iCloud Photo Album">
@@ -27,7 +29,7 @@
   <link rel="shortcut icon" href="/favicon.ico" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
   <link rel="manifest" href="/site.webmanifest" />
-  
+
   <title>iCloud Photo Album</title>
   <style>
     * {
@@ -210,7 +212,8 @@
 
     .photo-item .play-icon::before {
       content: '▶';
-      margin-left: 2px; /* Slight offset to center the triangle visually */
+      margin-left: 2px;
+      /* Slight offset to center the triangle visually */
     }
 
     .lightbox {
@@ -267,8 +270,8 @@
       /* Constrained by parent .lightbox-content which has the correct aspect ratio */
     }
 
-    .lightbox-image.loaded + .lightbox-thumbnail,
-    .lightbox-video.loaded + .lightbox-thumbnail {
+    .lightbox-image.loaded+.lightbox-thumbnail,
+    .lightbox-video.loaded+.lightbox-thumbnail {
       opacity: 0;
       pointer-events: none;
     }
@@ -426,6 +429,7 @@
     }
   </style>
 </head>
+
 <body>
   <div class="container">
     <div class="header">
@@ -444,7 +448,8 @@
   <div id="lightbox" class="lightbox">
     <div class="photo-counter" id="photo-counter"></div>
     <button class="lightbox-close" id="lightbox-close" aria-label="Close">×</button>
-    <button class="lightbox-nav prev" id="lightbox-prev" aria-label="Previous"><span class="lightbox-nav-icon">‹</span></button>
+    <button class="lightbox-nav prev" id="lightbox-prev" aria-label="Previous"><span
+        class="lightbox-nav-icon">‹</span></button>
     <div class="lightbox-content">
       <img id="lightbox-thumbnail" class="lightbox-thumbnail" alt="" style="display: none;">
       <img id="lightbox-image" class="lightbox-image" alt="" style="display: none;">
@@ -454,7 +459,8 @@
         <div class="lightbox-meta" id="lightbox-meta"></div>
       </div>
     </div>
-    <button class="lightbox-nav next" id="lightbox-next" aria-label="Next"><span class="lightbox-nav-icon">›</span></button>
+    <button class="lightbox-nav next" id="lightbox-next" aria-label="Next"><span
+        class="lightbox-nav-icon">›</span></button>
   </div>
 
   <script>
@@ -489,9 +495,9 @@
           throw new Error(`Failed to load album: ${response.statusText}`);
         }
         const data = await response.json();
-        
+
         photos = data.photos || [];
-        
+
         // Sort photos by dateCreated (newest first)
         photos.sort((a, b) => {
           const dateA = a.dateCreated ? new Date(a.dateCreated).getTime() : -Infinity;
@@ -500,7 +506,7 @@
           // Return positive if B should come before A (B is newer)
           return dateB - dateA; // Descending order: newer dates (larger) come first
         });
-        
+
         if (photos.length === 0) {
           document.getElementById('error').textContent = 'No photos found in this album.';
           document.getElementById('error').style.display = 'block';
@@ -514,7 +520,7 @@
           // Priority: streamName > firstName > full name
           let pageTitle = null;
           let appTitle = null;
-          
+
           if (data.metadata.streamName) {
             const streamName = data.metadata.streamName;
             pageTitle = `${streamName} - Photo Album`;
@@ -528,18 +534,18 @@
               appTitle = firstName || (fullName.length > 12 ? fullName.substring(0, 12) : fullName);
             }
           }
-          
+
           // Update browser tab title
           if (pageTitle) {
             document.title = pageTitle;
           }
-          
+
           // Update iOS "Add to Home Screen" title
           const titleMeta = document.getElementById('apple-mobile-web-app-title');
           if (titleMeta && appTitle) {
             titleMeta.setAttribute('content', appTitle);
           }
-          
+
           // Update page title display
           const firstName = data.metadata.userFirstName || '';
           const lastName = data.metadata.userLastName || '';
@@ -572,69 +578,9 @@
       }
     }
 
-    function getBestThumbnail(photo) {
-      // Safety check
-      if (!photo || !photo.derivatives || Object.keys(photo.derivatives).length === 0) {
-        return null;
-      }
-      
-      // For videos, prefer JPG thumbnails over MP4
-      if (isVideo(photo)) {
-        const jpgDerivatives = Object.keys(photo.derivatives)
-          .filter(size => {
-            const derivative = photo.derivatives[size];
-            // Check for both .JPG and .jpg (case insensitive)
-            return derivative && derivative.url && 
-                   (derivative.url.includes('.JPG') || derivative.url.includes('.jpg')) &&
-                   !derivative.url.includes('.mp4') && !derivative.url.includes('.MP4');
-          })
-          .map(Number)
-          .sort((a, b) => a - b);
-        
-        if (jpgDerivatives.length > 0) {
-          // Prefer 257, then 333, then smallest available JPG thumbnail
-          const preferred = jpgDerivatives.find(s => s >= 257) || jpgDerivatives[0];
-          const result = photo.derivatives[preferred.toString()];
-          if (result && result.url) return result;
-        }
-        // Fallback: if no JPG found, return smallest non-video derivative
-        const nonVideoDerivatives = Object.keys(photo.derivatives)
-          .filter(size => {
-            const derivative = photo.derivatives[size];
-            return derivative && derivative.url && 
-                   !derivative.url.includes('.mp4') && 
-                   !derivative.url.includes('.MP4');
-          })
-          .map(Number)
-          .sort((a, b) => a - b);
-        
-        if (nonVideoDerivatives.length > 0) {
-          const result = photo.derivatives[nonVideoDerivatives[0].toString()];
-          if (result && result.url) return result;
-        }
-      }
-      
-      // For photos, prefer 257, then 333, then smallest available
-      const sizes = Object.keys(photo.derivatives)
-        .filter(size => {
-          const derivative = photo.derivatives[size];
-          // Exclude videos
-          return derivative && derivative.url && 
-                 !derivative.url.includes('.mp4') && 
-                 !derivative.url.includes('.MP4');
-        })
-        .map(Number)
-        .sort((a, b) => a - b);
-      
-      if (sizes.length === 0) {
-        // Last resort: return any derivative with a URL
-        const anyDerivative = Object.values(photo.derivatives).find(d => d && d.url);
-        return anyDerivative || null;
-      }
-      
-      const preferred = sizes.find(s => s >= 257) || sizes[0];
-      const result = photo.derivatives[preferred.toString()];
-      return (result && result.url) ? result : null;
+    function isVideo(photo) {
+      return photo.mediaAssetType === 'video' ||
+        (photo.derivatives && Object.values(photo.derivatives).some(d => d.url && d.url.includes('.mp4')));
     }
 
     function getBestImage(photo) {
@@ -652,16 +598,82 @@
         })
         .map(Number)
         .sort((a, b) => b - a);
-      
+
       if (videoSizes.length > 0) {
         return photo.derivatives[videoSizes[0].toString()];
       }
       return null;
     }
 
-    function isVideo(photo) {
-      return photo.mediaAssetType === 'video' || 
-             (photo.derivatives && Object.values(photo.derivatives).some(d => d.url && d.url.includes('.mp4')));
+    function getBestThumbnail(photo) {
+      if (!photo || !photo.derivatives || Object.keys(photo.derivatives).length === 0) {
+        return null;
+      }
+
+      // Helper to extract numeric size from key (handles "1280-1" -> 1280)
+      function extractSize(key) {
+        const match = key.toString().match(/^(\d+)/);
+        return match ? parseInt(match[1], 10) : 0;
+      }
+
+      if (isVideo(photo)) {
+        // For videos, prefer JPG thumbnails over MP4
+        const jpgDerivatives = Object.keys(photo.derivatives)
+          .filter(key => {
+            const derivative = photo.derivatives[key];
+            if (!derivative || !derivative.url) return false;
+            const url = derivative.url.toLowerCase();
+            // Check for both .JPG and .jpg (case insensitive) or proxied URLs
+            return (url.includes('.jpg') || url.startsWith('/api/image/')) &&
+              !url.includes('.mp4');
+          })
+          .map(key => ({ key, size: extractSize(key) }))
+          .sort((a, b) => a.size - b.size);
+
+        if (jpgDerivatives.length > 0) {
+          // Prefer 257, then 333, then smallest available JPG thumbnail
+          const preferred = jpgDerivatives.find(d => d.size >= 257) || jpgDerivatives[0];
+          const result = photo.derivatives[preferred.key];
+          if (result && result.url) return result;
+        }
+
+        // Fallback: if no JPG found, return ANY non-video derivative
+        const nonVideoDerivatives = Object.keys(photo.derivatives)
+          .filter(key => {
+            const derivative = photo.derivatives[key];
+            if (!derivative || !derivative.url) return false;
+            const url = derivative.url.toLowerCase();
+            return !url.includes('.mp4');
+          })
+          .map(key => ({ key, size: extractSize(key) }))
+          .sort((a, b) => a.size - b.size);
+
+        if (nonVideoDerivatives.length > 0) {
+          const result = photo.derivatives[nonVideoDerivatives[0].key];
+          if (result && result.url) return result;
+        }
+      }
+
+      // For photos, prefer 257, then 333, then smallest available
+      const sizes = Object.keys(photo.derivatives)
+        .filter(key => {
+          const derivative = photo.derivatives[key];
+          if (!derivative || !derivative.url) return false;
+          const url = derivative.url.toLowerCase();
+          return !url.includes('.mp4');
+        })
+        .map(key => ({ key, size: extractSize(key) }))
+        .sort((a, b) => a.size - b.size);
+
+      if (sizes.length === 0) {
+        // Last resort: return any derivative with a URL
+        const anyDerivative = Object.values(photo.derivatives).find(d => d && d.url);
+        return anyDerivative || null;
+      }
+
+      const preferred = sizes.find(d => d.size >= 257) || sizes[0];
+      const result = photo.derivatives[preferred.key];
+      return (result && result.url) ? result : null;
     }
 
     function renderGrid() {
@@ -670,32 +682,41 @@
 
       photos.forEach((photo, index) => {
         const thumbnail = getBestThumbnail(photo);
-        
-        // Skip photos without valid thumbnails
-        if (!thumbnail || !thumbnail.url) {
+        const isVideoMedia = isVideo(photo);
+
+        // Skip photos without valid thumbnails unless it's a video (we can show a placeholder)
+        if ((!thumbnail || !thumbnail.url) && !isVideoMedia) {
           console.warn('Skipping photo without valid thumbnail:', photo);
           return;
         }
-        
+
         const item = document.createElement('div');
-        const isVideoMedia = isVideo(photo);
         item.className = isVideoMedia ? 'photo-item video-item' : 'photo-item';
-        
-        // Create img element and store reference for lightbox reuse
-        const img = document.createElement('img');
-        img.src = thumbnail.url;
-        img.alt = '';
-        img.loading = 'lazy';
-        img.dataset.photoIndex = index; // Store index for quick lookup
-        item.appendChild(img);
-        
-        // Add play icon overlay for videos
-        if (isVideoMedia) {
+        item.dataset.photoIndex = index;
+
+        if (thumbnail && thumbnail.url) {
+          // Create img element and store reference for lightbox reuse
+          const img = document.createElement('img');
+          img.src = thumbnail.url;
+          img.alt = '';
+          img.loading = 'lazy';
+          img.dataset.photoIndex = index; // Store index for quick lookup
+          item.appendChild(img);
+        } else if (isVideoMedia) {
+          // Placeholder for video without thumbnail
+          const placeholder = document.createElement('div');
+          placeholder.style.cssText = 'width: 100%; height: 100%; background: #333; display: flex; align-items: center; justify-content: center; color: #999; font-size: 14px; flex-direction: column; gap: 8px;';
+          placeholder.innerHTML = '<div style="font-size: 24px;">🎥</div><div>Video</div>';
+          item.appendChild(placeholder);
+        }
+
+        // Add play icon overlay for videos (only if thumbnail exists, otherwise placeholder handles it)
+        if (isVideoMedia && thumbnail && thumbnail.url) {
           const playIcon = document.createElement('div');
           playIcon.className = 'play-icon';
           item.appendChild(playIcon);
         }
-        
+
         item.addEventListener('click', () => openLightbox(index));
         grid.appendChild(item);
       });
@@ -704,11 +725,11 @@
     function openLightbox(index) {
       currentIndex = index;
       const lightbox = document.getElementById('lightbox');
-      
+
       // Show thumbnail immediately before opening lightbox (if available)
       const gridImg = document.querySelector(`.photo-item img[data-photo-index="${index}"]`);
       const thumbnail = document.getElementById('lightbox-thumbnail');
-      
+
       if (gridImg && gridImg.complete && gridImg.naturalWidth > 0) {
         // Pre-populate thumbnail with already-loaded grid image
         thumbnail.src = gridImg.src;
@@ -716,11 +737,11 @@
         thumbnail.style.opacity = '1';
         thumbnail.style.filter = 'none';
       }
-      
+
       lightbox.classList.add('active');
       updateLightbox();
       document.body.style.overflow = 'hidden';
-      
+
       // Notify parent if in iframe
       if (window.parent !== window) {
         window.parent.postMessage({ type: 'icloud-album-lightbox-open' }, '*');
@@ -733,11 +754,11 @@
       if (video && !video.paused) {
         video.pause();
       }
-      
+
       const lightbox = document.getElementById('lightbox');
       lightbox.classList.remove('active');
       document.body.style.overflow = '';
-      
+
       // Notify parent if in iframe
       if (window.parent !== window) {
         window.parent.postMessage({ type: 'icloud-album-lightbox-close' }, '*');
@@ -756,7 +777,7 @@
       video.style.display = 'none';
       img.classList.remove('loaded');
       video.classList.remove('loaded');
-      
+
       // Only hide thumbnail if it wasn't already set in openLightbox
       const thumbnailAlreadySet = thumbnail.src && thumbnail.style.display !== 'none' && thumbnail.complete;
       if (!thumbnailAlreadySet) {
@@ -777,18 +798,18 @@
         const gridImg = document.querySelector(`.photo-item img[data-photo-index="${currentIndex}"]`);
         const fullImage = getBestImage(photo);
         const lightboxContent = document.querySelector('.lightbox-content');
-        
+
         // Set aspect ratio for lightbox content based on full image dimensions to prevent reflow
         // Account for viewport constraints (max 90vw x 90vh)
         let displayWidth, displayHeight;
         if (fullImage.width && fullImage.height) {
           const maxWidth = window.innerWidth * 0.9;
           const maxHeight = window.innerHeight * 0.9;
-          
+
           // Calculate how the image will actually be displayed (constrained by viewport)
           const imageAspectRatio = fullImage.width / fullImage.height;
           const viewportAspectRatio = maxWidth / maxHeight;
-          
+
           if (imageAspectRatio > viewportAspectRatio) {
             // Image is wider - constrained by width
             displayWidth = Math.min(fullImage.width, maxWidth);
@@ -798,14 +819,14 @@
             displayHeight = Math.min(fullImage.height, maxHeight);
             displayWidth = displayHeight * imageAspectRatio;
           }
-          
+
           // Set aspect ratio and size on lightbox content
           lightboxContent.style.aspectRatio = `${displayWidth} / ${displayHeight}`;
           lightboxContent.style.width = `${displayWidth}px`;
           lightboxContent.style.maxWidth = '90vw';
           lightboxContent.style.maxHeight = '90vh';
         }
-        
+
         // Show thumbnail immediately - MUST use the exact same src from grid
         if (gridImg && gridImg.src) {
           // Use the EXACT same src from the grid image (already loaded and cached)
@@ -823,9 +844,9 @@
             thumbnail.style.filter = 'blur(10px)';
           }
         }
-        
+
         // Load full image
-        img.onload = function() {
+        img.onload = function () {
           img.classList.add('loaded');
           img.style.display = 'block';
           // Hide thumbnail immediately
@@ -910,10 +931,10 @@
         });
       }).then((registration) => {
         console.log('Service Worker registered:', registration);
-        
+
         // Check notification permission and show banner on iOS if needed
         checkNotificationPermission();
-        
+
         // Update tracked tokens when album loads
         updateTrackedTokens([token]);
       }).catch((error) => {
@@ -938,7 +959,7 @@
               console.error('Failed to update tracked tokens:', event.data.error);
             }
           };
-          
+
           if (navigator.serviceWorker.controller) {
             navigator.serviceWorker.controller.postMessage(
               { type: 'UPDATE_TRACKED_TOKENS', tokens },
@@ -974,8 +995,8 @@
     }
 
     // Detect iOS
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
-                  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
     // Check notification permission and show banner if needed
     function checkNotificationPermission() {
@@ -985,7 +1006,7 @@
 
       const currentPermission = Notification.permission;
       const banner = document.getElementById('notification-permission-banner');
-      
+
       // Show banner on iOS if permission is default (not yet requested)
       if (isIOS && currentPermission === 'default' && banner) {
         banner.classList.add('show');
@@ -1016,7 +1037,7 @@
         try {
           const result = await Notification.requestPermission();
           console.log('Notification permission result:', result);
-          
+
           const banner = document.getElementById('notification-permission-banner');
           if (banner) {
             banner.classList.remove('show');
@@ -1024,7 +1045,7 @@
 
           if (result === 'granted') {
             console.log('Notification permission granted - badges will work');
-            
+
             // On iOS, also try setting badge from main thread
             if (isIOS && 'setAppBadge' in navigator) {
               try {
@@ -1037,7 +1058,7 @@
                 console.error('Error setting badge from main thread:', badgeError);
               }
             }
-            
+
             // Trigger immediate badge check
             if ('serviceWorker' in navigator) {
               navigator.serviceWorker.ready.then((registration) => {
@@ -1046,7 +1067,7 @@
                 }
               });
             }
-            
+
             // Optionally show a success message
             if (requestPermissionButton) {
               requestPermissionButton.textContent = 'Enabled!';
@@ -1071,7 +1092,7 @@
     // Keyboard navigation
     document.addEventListener('keydown', (e) => {
       const lightbox = document.getElementById('lightbox');
-      
+
       if (e.key === 'Escape') {
         if (lightbox.classList.contains('active')) {
           closeLightbox();
@@ -1091,7 +1112,7 @@
     // Touch/swipe support
     // Touch handlers for swipe gestures
     const lightboxContent = document.querySelector('.lightbox-content');
-    
+
     lightboxContent.addEventListener('touchstart', (e) => {
       touchStartX = e.changedTouches[0].screenX;
       touchStartY = e.changedTouches[0].screenY;
@@ -1127,5 +1148,5 @@
 
   <script defer src="https://analytics.futhey.net/script.js"></script>
 </body>
-</html>
 
+</html>
