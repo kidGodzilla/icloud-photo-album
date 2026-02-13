@@ -66,18 +66,18 @@ let ffprobePath = null;
   const { exec } = await import('child_process');
   const { promisify } = await import('util');
   const execAsync = promisify(exec);
-  
+
   try {
     // Test if system ffmpeg is available
     await execAsync('which ffmpeg');
     const { stdout: ffmpegSystemPath } = await execAsync('which ffmpeg');
     const { stdout: ffprobeSystemPath } = await execAsync('which ffprobe').catch(() => ({ stdout: '' }));
-    
+
     if (ffmpegSystemPath && ffmpegSystemPath.trim()) {
       ffmpegPath = ffmpegSystemPath.trim();
       ffmpeg.setFfmpegPath(ffmpegPath);
       console.log('Using system FFmpeg:', ffmpegPath);
-      
+
       if (ffprobeSystemPath && ffprobeSystemPath.trim()) {
         ffprobePath = ffprobeSystemPath.trim();
         ffmpeg.setFfprobePath(ffprobePath);
@@ -120,7 +120,7 @@ let ffprobePath = null;
         console.warn(`FFprobe binary not found at path: ${ffprobePath}`);
       }
     }
-  } catch(e) {
+  } catch (e) {
     console.warn('FFmpeg static binaries not found:', e.message);
     console.warn('Please install ffmpeg and ffprobe system-wide: apt-get install ffmpeg');
   }
@@ -135,7 +135,7 @@ const WHISPER_MODEL_PATH = path.join(WHISPER_DIR, `ggml-${WHISPER_MODEL}.bin`);
 let whisperInstalled = false;
 
 // Initialize Whisper.cpp (async, non-blocking) - following example pattern
-(async function() {
+(async function () {
   // Ensure WHISPER_DIR exists
   try {
     await fs.mkdir(WHISPER_DIR, { recursive: true });
@@ -177,7 +177,7 @@ let whisperInstalled = false;
     } else {
       console.log('Installing Whisper.cpp...');
     }
-    
+
     // Check for incomplete installation and clean it up
     if (existsSync(WHISPER_DIR) && !existsSync(WHISPER_EXE)) {
       console.log('Incomplete whisper.cpp installation detected. Attempting to clean up...');
@@ -208,7 +208,7 @@ let whisperInstalled = false;
         console.warn('Could not clean up incomplete installation:', cleanupError.message);
       }
     }
-    
+
     // Install from source
     // Wrap in try-catch to handle the case where directory still exists
     try {
@@ -229,7 +229,7 @@ let whisperInstalled = false;
         }
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
-      
+
       await installWhisperCpp({ to: WHISPER_DIR, version: '1.7.1' });
     } catch (installError) {
       // If error says directory exists, try removing it and retrying
@@ -266,7 +266,7 @@ let whisperInstalled = false;
       model: WHISPER_MODEL,
       folder: WHISPER_DIR,
     });
-    
+
     // Verify installation
     if (existsSync(WHISPER_EXE) && existsSync(WHISPER_MODEL_PATH)) {
       whisperInstalled = true;
@@ -274,7 +274,7 @@ let whisperInstalled = false;
     } else {
       console.warn(`Whisper.cpp installation incomplete. Expected executable at: ${WHISPER_EXE}, model at: ${WHISPER_MODEL_PATH}`);
     }
-  } catch(e) {
+  } catch (e) {
     // If executable exists despite error, we can still use it
     if (existsSync(WHISPER_EXE) && existsSync(WHISPER_MODEL_PATH)) {
       whisperInstalled = true;
@@ -334,14 +334,14 @@ function sanitizeToken(token) {
 async function getCachedData(token) {
   const safeToken = sanitizeToken(token);
   const cacheFile = path.join(ALBUMS_CACHE_DIR, `${safeToken}.json`);
-  
+
   try {
     const fileContent = await fs.readFile(cacheFile, 'utf-8');
     const cached = JSON.parse(fileContent);
-    
+
     const now = Date.now();
     const age = now - cached.timestamp;
-    
+
     // Always return cached data (even if stale) for stale-while-revalidate
     return {
       data: cached.data,
@@ -360,7 +360,7 @@ async function getCachedData(token) {
 async function setCachedData(token, data, isReloading = false) {
   const safeToken = sanitizeToken(token);
   const cacheFile = path.join(ALBUMS_CACHE_DIR, `${safeToken}.json`);
-  
+
   try {
     const existing = await getCachedData(token);
     const cacheData = {
@@ -368,7 +368,7 @@ async function setCachedData(token, data, isReloading = false) {
       timestamp: Date.now(),
       reloading: isReloading || (existing?.data ? reloadingState.get(token) || false : false)
     };
-    
+
     await fs.writeFile(cacheFile, JSON.stringify(cacheData, null, 2), 'utf-8');
     reloadingState.set(token, cacheData.reloading);
   } catch (error) {
@@ -418,7 +418,9 @@ app.use((req, res, next) => {
 });
 
 // Secure image URL mapping (opaque ID -> original URL) - stored on disk
-const IMAGE_URL_MAP_TTL = 24 * 60 * 60 * 1000; // 24 hours
+const IMAGE_URL_MAP_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days (was 24 hours)
+// Image retention period: 30 days
+const IMAGE_RETENTION_TTL = 30 * 24 * 60 * 60 * 1000;
 
 // Image optimization configuration
 const MAX_IMAGE_WIDTH = parseInt(process.env.MAX_IMAGE_WIDTH || '1920', 10);
@@ -436,21 +438,21 @@ async function storeImageUrl(originalUrl) {
   // Create a deterministic hash of the URL to use as lookup key
   const urlHash = crypto.createHash('sha256').update(originalUrl).digest('hex').substring(0, 16);
   const lookupFile = path.join(MAPPINGS_CACHE_DIR, `_lookup_${urlHash}.json`);
-  
+
   // Check if we already have a secure ID for this URL
   try {
     const lookupData = await fs.readFile(lookupFile, 'utf-8');
     const lookup = JSON.parse(lookupData);
-    
+
     // Verify the URL matches (in case of hash collision)
     if (lookup.url === originalUrl && lookup.secureId) {
       // Check if the mapping file still exists
       const mappingFile = path.join(MAPPINGS_CACHE_DIR, `${lookup.secureId}.json`);
-      
+
       try {
         const mappingContent = await fs.readFile(mappingFile, 'utf-8');
         const mapping = JSON.parse(mappingContent);
-        
+
         // Check if we need to refresh the timestamp (e.g. if older than 1 hour)
         // This keeps frequently accessed images from expiring
         const age = Date.now() - mapping.timestamp;
@@ -460,12 +462,12 @@ async function storeImageUrl(originalUrl) {
           fs.writeFile(mappingFile, JSON.stringify(mapping, null, 2), 'utf-8').catch(err => {
             console.error('Error updating mapping timestamp:', err);
           });
-          
+
           // Also update lookup timestamp
           lookup.timestamp = Date.now();
-          fs.writeFile(lookupFile, JSON.stringify(lookup, null, 2), 'utf-8').catch(() => {});
+          fs.writeFile(lookupFile, JSON.stringify(lookup, null, 2), 'utf-8').catch(() => { });
         }
-        
+
         // Mapping exists, return existing secure ID
         return lookup.secureId;
       } catch (e) {
@@ -475,11 +477,11 @@ async function storeImageUrl(originalUrl) {
   } catch (error) {
     // Lookup file doesn't exist, will create new mapping below
   }
-  
+
   // Generate new secure ID only if we don't have one
   const secureId = generateSecureId();
   const mappingFile = path.join(MAPPINGS_CACHE_DIR, `${secureId}.json`);
-  
+
   try {
     // Store the mapping (secure ID -> original URL)
     const mapping = {
@@ -487,7 +489,7 @@ async function storeImageUrl(originalUrl) {
       timestamp: Date.now()
     };
     await fs.writeFile(mappingFile, JSON.stringify(mapping, null, 2), 'utf-8');
-    
+
     // Store lookup mapping (URL hash -> secure ID) for fast lookup
     const lookup = {
       url: originalUrl,
@@ -498,25 +500,25 @@ async function storeImageUrl(originalUrl) {
   } catch (error) {
     console.error('Error storing image URL mapping:', error);
   }
-  
+
   return secureId;
 }
 
 // Retrieve original URL from secure ID
 async function getImageUrl(secureId) {
   const mappingFile = path.join(MAPPINGS_CACHE_DIR, `${secureId}.json`);
-  
+
   try {
     const fileContent = await fs.readFile(mappingFile, 'utf-8');
     const mapping = JSON.parse(fileContent);
-    
+
     // Clean up old mappings
     const age = Date.now() - mapping.timestamp;
     if (age > IMAGE_URL_MAP_TTL) {
-      await fs.unlink(mappingFile).catch(() => {}); // Ignore errors if file doesn't exist
+      await fs.unlink(mappingFile).catch(() => { }); // Ignore errors if file doesn't exist
       return null;
     }
-    
+
     return mapping.url;
   } catch (error) {
     if (error.code === 'ENOENT') {
@@ -530,28 +532,66 @@ async function getImageUrl(secureId) {
 // Cleanup old mappings and images periodically
 setInterval(async () => {
   const now = Date.now();
-  
+
   try {
-    // Clean up old mappings
+    // 1. Clean up old mappings (metadata)
+    // We only delete the mapping file, NOT the image file associated with it.
+    // This allows images to persist even if their original mapping expires,
+    // which helps in cases where the mapping is regenerated later.
     const mappingFiles = await fs.readdir(MAPPINGS_CACHE_DIR);
     for (const file of mappingFiles) {
       if (file.endsWith('.json')) {
         const mappingFile = path.join(MAPPINGS_CACHE_DIR, file);
         try {
+          const stats = await fs.stat(mappingFile);
+          // Check file modification time as a fallback if reading content fails
+          // But generally we want to check the internal timestamp
           const fileContent = await fs.readFile(mappingFile, 'utf-8');
           const mapping = JSON.parse(fileContent);
+
           if (now - mapping.timestamp > IMAGE_URL_MAP_TTL) {
             await fs.unlink(mappingFile);
-            // Also delete corresponding image cache
-            const secureId = path.basename(file, '.json');
-            const imageFile = path.join(IMAGES_CACHE_DIR, `${secureId}.jpg`);
-            await fs.unlink(imageFile).catch(() => {}); // Ignore if doesn't exist
+            // Note: We deliberately DO NOT delete the corresponding image here anymore.
+            // Images are cleaned up separately based on their own access time.
           }
         } catch (err) {
-          // Skip files that can't be read
+          // If file is corrupt or unreadable, delete it if it's old enough
+          try {
+            const stats = await fs.stat(mappingFile);
+            if (now - stats.mtimeMs > IMAGE_URL_MAP_TTL) {
+              await fs.unlink(mappingFile).catch(() => { });
+            }
+          } catch (e) {
+            // Ignore
+          }
         }
       }
     }
+
+    // 2. Clean up old images based on access time (LRU-style)
+    // This cleans up images that haven't been accessed in a long time (30 days),
+    // regardless of whether they have a valid mapping or not.
+    const imageFiles = await fs.readdir(IMAGES_CACHE_DIR);
+    for (const file of imageFiles) {
+      // Only process image files (skip .DS_Store etc)
+      if (file.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
+        const imageFile = path.join(IMAGES_CACHE_DIR, file);
+        try {
+          const stats = await fs.stat(imageFile);
+          // Check access time (atime) or modification time (mtime)
+          // We use whichever is more recent to be safe
+          const lastAccess = Math.max(stats.atimeMs, stats.mtimeMs);
+
+          if (now - lastAccess > IMAGE_RETENTION_TTL) {
+            await fs.unlink(imageFile);
+            console.log(`Cleaned up old image: ${file} (last accessed ${Math.round((now - lastAccess) / (1000 * 60 * 60 * 24))} days ago)`);
+          }
+        } catch (err) {
+          // Ignore errors
+        }
+      }
+    }
+
   } catch (error) {
     console.error('Error during cache cleanup:', error);
   }
@@ -567,16 +607,16 @@ async function stripExifLocation(imageUrl) {
     }
 
     const imageBuffer = Buffer.from(await response.arrayBuffer());
-    
+
     // Load image and get metadata
     let image = sharp(imageBuffer);
     const metadata = await image.metadata();
-    
+
     // Calculate resize dimensions (maintain aspect ratio)
     let width = metadata.width;
     let height = metadata.height;
     const needsResize = width > MAX_IMAGE_WIDTH || height > MAX_IMAGE_HEIGHT;
-    
+
     if (needsResize) {
       // Resize to fit within max dimensions while maintaining aspect ratio
       if (width > height) {
@@ -591,7 +631,7 @@ async function stripExifLocation(imageUrl) {
         }
       }
     }
-    
+
     // Process image: rotate, resize, strip EXIF GPS, and optimize
     const processedBuffer = await image
       .rotate() // Auto-rotate based on EXIF
@@ -599,13 +639,13 @@ async function stripExifLocation(imageUrl) {
         fit: 'inside',
         withoutEnlargement: true // Don't upscale smaller images
       })
-      .jpeg({ 
+      .jpeg({
         quality: IMAGE_QUALITY,
         mozjpeg: true, // Use mozjpeg for better compression
         progressive: true // Progressive JPEG for better perceived performance
       })
       .toBuffer();
-    
+
     return processedBuffer;
   } catch (error) {
     console.error('Error processing image:', error);
@@ -623,13 +663,13 @@ async function stripExifLocation(imageUrl) {
 app.get('/api/image/:secureId.jpg', async (req, res) => {
   try {
     const { secureId } = req.params;
-    
+
     if (!secureId) {
       return res.status(400).json({ error: 'Image ID is required' });
     }
 
     const imageFile = path.join(IMAGES_CACHE_DIR, `${secureId}.jpg`);
-    
+
     // Check if cached image exists
     let cachedImageExists = false;
     let cachedStats = null;
@@ -637,14 +677,14 @@ app.get('/api/image/:secureId.jpg', async (req, res) => {
       cachedStats = await fs.stat(imageFile);
       cachedImageExists = true;
       const age = Date.now() - cachedStats.mtimeMs;
-      
+
       // If cached image is fresh, serve it directly
       if (age < CACHE_TTL) {
         // Generate ETag
         const etag = `"${secureId}-${cachedStats.mtimeMs}"`;
         res.set('ETag', etag);
         res.set('Last-Modified', cachedStats.mtime.toUTCString());
-        
+
         // Check if client has cached version (If-None-Match header)
         const ifNoneMatch = req.get('If-None-Match');
         if (ifNoneMatch === etag) {
@@ -655,7 +695,7 @@ app.get('/api/image/:secureId.jpg', async (req, res) => {
           res.set('Cache-Control', 'public, max-age=31536000, immutable');
           return res.status(304).end();
         }
-        
+
         // Serve cached image with proper cache headers
         const imageBuffer = await fs.readFile(imageFile);
         // Remove any default no-cache headers Express might set
@@ -665,6 +705,13 @@ app.get('/api/image/:secureId.jpg', async (req, res) => {
         // Set proper cache headers
         res.set('Content-Type', 'image/jpeg');
         res.set('Cache-Control', 'public, max-age=31536000, immutable'); // Cache for 1 year
+
+        // Update access time for LRU cleanup (fire and forget)
+        const now = new Date();
+        fs.utimes(imageFile, now, now).catch(err => {
+          console.error('Error updating image access time:', err);
+        });
+
         return res.send(imageBuffer);
       }
       // If cached image exists but is stale, we'll try to refresh it below
@@ -690,6 +737,13 @@ app.get('/api/image/:secureId.jpg', async (req, res) => {
           res.set('Cache-Control', 'public, max-age=31536000, immutable');
           res.set('ETag', `"${secureId}-${cachedStats.mtimeMs}"`);
           res.set('Last-Modified', cachedStats.mtime.toUTCString());
+
+          // Update access time for LRU cleanup (fire and forget)
+          const now = new Date();
+          fs.utimes(imageFile, now, now).catch(err => {
+            console.error('Error updating image access time:', err);
+          });
+
           return res.send(cachedBuffer);
         } catch (error) {
           // Error reading cached file, return 404
@@ -719,6 +773,13 @@ app.get('/api/image/:secureId.jpg', async (req, res) => {
           res.set('Cache-Control', 'public, max-age=31536000, immutable');
           res.set('ETag', `"${secureId}-${cachedStats.mtimeMs}"`);
           res.set('Last-Modified', cachedStats.mtime.toUTCString());
+
+          // Update access time for LRU cleanup (fire and forget)
+          const now = new Date();
+          fs.utimes(imageFile, now, now).catch(err => {
+            console.error('Error updating image access time:', err);
+          });
+
           return res.send(cachedBuffer);
         } catch (cacheError) {
           // Error reading cached file, continue to throw original error
@@ -727,7 +788,7 @@ app.get('/api/image/:secureId.jpg', async (req, res) => {
       // No cached file or error reading it, return error
       throw error; // Throw original fetch error
     }
-    
+
     await fs.writeFile(imageFile, cleanedBuffer);
 
     // Remove any default no-cache headers Express might set
@@ -741,11 +802,18 @@ app.get('/api/image/:secureId.jpg', async (req, res) => {
     res.set('ETag', `"${secureId}-${stats.mtimeMs}"`);
     res.set('Last-Modified', stats.mtime.toUTCString());
     res.send(cleanedBuffer);
+
+    // Update access time for LRU cleanup (fire and forget)
+    // We update both atime and mtime to now
+    const now = new Date();
+    fs.utimes(imageFile, now, now).catch(err => {
+      console.error('Error updating image access time:', err);
+    });
   } catch (error) {
     console.error('Error proxying image:', error);
-    res.status(500).json({ 
-      error: 'Failed to proxy image', 
-      message: error.message 
+    res.status(500).json({
+      error: 'Failed to proxy image',
+      message: error.message
     });
   }
 });
@@ -756,26 +824,26 @@ async function rewriteImageUrls(data, originalToken) {
     console.warn('Invalid data structure in rewriteImageUrls:', data);
     return data;
   }
-  
+
   const rewritten = JSON.parse(JSON.stringify(data)); // Deep clone
-  
+
   // Process all image URLs in parallel
   const urlPromises = [];
   const urlIndices = [];
-  
+
   rewritten.photos.forEach((photo, photoIndex) => {
     if (!photo || !photo.derivatives || typeof photo.derivatives !== 'object') {
       console.warn(`Photo at index ${photoIndex} missing derivatives:`, photo);
       return;
     }
-    
+
     Object.keys(photo.derivatives).forEach(size => {
       const derivative = photo.derivatives[size];
       // Check if derivative exists and has a url property
       if (!derivative || typeof derivative !== 'object') {
         return;
       }
-      
+
       if (derivative.url && typeof derivative.url === 'string') {
         // Skip if already rewritten (starts with /api/image/)
         if (derivative.url.startsWith('/api/image/')) {
@@ -796,21 +864,21 @@ async function rewriteImageUrls(data, originalToken) {
       }
     });
   });
-  
+
   // Wait for all secure IDs to be generated
   if (urlPromises.length > 0) {
     try {
       const secureIds = await Promise.all(urlPromises);
-      
-          // Apply secure IDs to derivatives (with .jpg extension for better caching)
-          secureIds.forEach((secureId, index) => {
-            const { photoIndex, size } = urlIndices[index];
-            if (rewritten.photos[photoIndex] && 
-                rewritten.photos[photoIndex].derivatives && 
-                rewritten.photos[photoIndex].derivatives[size]) {
-              rewritten.photos[photoIndex].derivatives[size].url = `/api/image/${secureId}.jpg`;
-            }
-          });
+
+      // Apply secure IDs to derivatives (with .jpg extension for better caching)
+      secureIds.forEach((secureId, index) => {
+        const { photoIndex, size } = urlIndices[index];
+        if (rewritten.photos[photoIndex] &&
+          rewritten.photos[photoIndex].derivatives &&
+          rewritten.photos[photoIndex].derivatives[size]) {
+          rewritten.photos[photoIndex].derivatives[size].url = `/api/image/${secureId}.jpg`;
+        }
+      });
     } catch (error) {
       console.error('Error generating secure IDs:', error);
       // Return data without rewriting if there's an error
@@ -829,20 +897,20 @@ async function rewriteImageUrls(data, originalToken) {
 app.post('/api/encrypt-token', (req, res) => {
   try {
     const { token } = req.body;
-    
+
     if (!token) {
       return res.status(400).json({ error: 'Album token is required' });
     }
 
     const encrypted = encrypt.encrypt(token);
     const encryptedToken = `e-${encrypted}`;
-    
+
     res.json({ encryptedToken });
   } catch (error) {
     console.error('Error encrypting token:', error);
-    res.status(500).json({ 
-      error: 'Failed to encrypt token', 
-      message: error.message 
+    res.status(500).json({
+      error: 'Failed to encrypt token',
+      message: error.message
     });
   }
 });
@@ -851,7 +919,7 @@ app.post('/api/encrypt-token', (req, res) => {
 app.get('/api/album/:token', async (req, res) => {
   try {
     let { token } = req.params;
-    
+
     if (!token) {
       return res.status(400).json({ error: 'Album token is required' });
     }
@@ -863,9 +931,9 @@ app.get('/api/album/:token', async (req, res) => {
       decryptedToken = decryptToken(token);
     } catch (error) {
       console.error('Token decryption error:', error.message, 'Token:', token);
-      return res.status(400).json({ 
-        error: 'Invalid encrypted token', 
-        message: error.message 
+      return res.status(400).json({
+        error: 'Invalid encrypted token',
+        message: error.message
       });
     }
 
@@ -880,7 +948,7 @@ app.get('/api/album/:token', async (req, res) => {
 
     // Use decrypted token as cache key so encrypted and unencrypted tokens share the same cache
     const cacheKey = finalDecryptedToken;
-    
+
     // Check if refresh is requested (force fresh fetch)
     const forceRefresh = req.query.refresh === 'true';
 
@@ -889,25 +957,25 @@ app.get('/api/album/:token', async (req, res) => {
     if (cached) {
       const isStale = cached.isStale;
       const cachedData = cached.data;
-      
+
       // Check if cached data already has rewritten URLs (old cache format)
-      const hasRewrittenUrls = cachedData.photos && cachedData.photos.some(photo => 
-        photo.derivatives && Object.values(photo.derivatives).some(d => 
+      const hasRewrittenUrls = cachedData.photos && cachedData.photos.some(photo =>
+        photo.derivatives && Object.values(photo.derivatives).some(d =>
           d.url && d.url.startsWith('/api/image/')
         )
       );
-      
+
       if (hasRewrittenUrls) {
         // Old cache format - URLs already rewritten, just return as-is
         if (isStale && !reloadingState.get(cacheKey)) {
           cachedData.reloading = true;
           res.json(cachedData);
-          
+
           // Reload in background
           (async () => {
             try {
               const freshData = await getImages(finalDecryptedToken);
-              
+
               // Trigger video augmentation processing for all videos in background
               if (freshData.photos && Array.isArray(freshData.photos)) {
                 freshData.photos.forEach(photo => {
@@ -928,7 +996,7 @@ app.get('/api/album/:token', async (req, res) => {
                   }
                 });
               }
-              
+
               const freshRewritten = await rewriteImageUrls(freshData, finalDecryptedToken);
               await setCachedData(cacheKey, freshRewritten, false);
               console.log(`Background reload complete for album: ${finalDecryptedToken}`);
@@ -940,35 +1008,35 @@ app.get('/api/album/:token', async (req, res) => {
           return;
         } else {
           cachedData.reloading = false;
-          
+
           // Track this token for background refresh
           trackTokenForRefresh(finalDecryptedToken);
-          
+
           return res.json(cachedData);
         }
       }
-      
+
       // New cache format - rewrite URLs on read
       if (isStale && !reloadingState.get(cacheKey)) {
         // Stale cache - return immediately and reload in background
         console.log(`Stale cache hit for album: ${finalDecryptedToken}, serving stale data and reloading in background...`);
         setReloading(cacheKey, true);
-        
+
         // Return stale data immediately with reloading flag
         const rewritten = await rewriteImageUrls(cachedData, finalDecryptedToken);
         rewritten.reloading = true;
-        
+
         // Track this token for background refresh
         trackTokenForRefresh(finalDecryptedToken);
-        
+
         res.json(rewritten);
-        
+
         // Reload in background (don't await)
         (async () => {
           try {
             console.log('Decrypted token:', finalDecryptedToken);
             const freshData = await getImages(finalDecryptedToken);
-            
+
             // Trigger video augmentation processing for all videos in background
             if (freshData.photos && Array.isArray(freshData.photos)) {
               freshData.photos.forEach(photo => {
@@ -989,7 +1057,7 @@ app.get('/api/album/:token', async (req, res) => {
                 }
               });
             }
-            
+
             const freshRewritten = await rewriteImageUrls(freshData, finalDecryptedToken);
             await setCachedData(cacheKey, freshRewritten, false);
             console.log(`Background reload complete for album: ${finalDecryptedToken}`);
@@ -1004,10 +1072,10 @@ app.get('/api/album/:token', async (req, res) => {
         console.log(`Cache hit for album: ${finalDecryptedToken}`);
         const rewritten = await rewriteImageUrls(cachedData, finalDecryptedToken);
         rewritten.reloading = false;
-        
+
         // Track this token for background refresh
         trackTokenForRefresh(finalDecryptedToken);
-        
+
         return res.json(rewritten);
       }
     }
@@ -1015,10 +1083,10 @@ app.get('/api/album/:token', async (req, res) => {
     // Cache miss - fetch from iCloud
     console.log(`Cache miss for album: ${finalDecryptedToken}, fetching from iCloud...`);
     const data = await getImages(finalDecryptedToken);
-    
+
     // Store original data in cache (before rewriting URLs)
     await setCachedData(cacheKey, data, false);
-    
+
     // Trigger video augmentation processing for all videos in background (with queue)
     if (data.photos && Array.isArray(data.photos)) {
       data.photos.forEach(photo => {
@@ -1039,20 +1107,20 @@ app.get('/api/album/:token', async (req, res) => {
         }
       });
     }
-    
+
     // Rewrite URLs to use proxy (strip EXIF) for response
     const rewritten = await rewriteImageUrls(data, finalDecryptedToken);
     rewritten.reloading = false;
-    
+
     // Track this token for background refresh
     trackTokenForRefresh(finalDecryptedToken);
-    
+
     res.json(rewritten);
   } catch (error) {
     console.error('Error fetching album:', error);
-    res.status(500).json({ 
-      error: 'Failed to fetch album', 
-      message: error.message 
+    res.status(500).json({
+      error: 'Failed to fetch album',
+      message: error.message
     });
   }
 });
@@ -1061,7 +1129,7 @@ app.get('/api/album/:token', async (req, res) => {
 async function generateAlbumIcon(decryptedToken) {
   try {
     const iconFile = path.join(ICONS_CACHE_DIR, `${sanitizeToken(decryptedToken)}.png`);
-    
+
     // Check if icon already exists
     if (existsSync(iconFile)) {
       const stats = await fs.stat(iconFile);
@@ -1137,9 +1205,9 @@ async function generateAlbumIcon(decryptedToken) {
     });
 
     const thumbnails = (await Promise.all(thumbnailPromises)).filter(Boolean);
-    
+
     console.log(`Successfully fetched ${thumbnails.length} thumbnails`);
-    
+
     if (thumbnails.length === 0) {
       console.log(`Failed to fetch any thumbnails for token: ${decryptedToken.substring(0, 10)}...`);
       return null;
@@ -1189,10 +1257,10 @@ function getBestThumbnail(photo) {
 
   // For videos, prioritize JPG thumbnails
   const isVideoItem = isVideo(photo);
-  
+
   // Get all derivative keys and sort by size (largest first for images, or find JPG for videos)
   const derivativeKeys = Object.keys(photo.derivatives);
-  
+
   if (isVideoItem) {
     // For videos, find JPG thumbnail
     const jpgKey = derivativeKeys.find(key => {
@@ -1203,17 +1271,17 @@ function getBestThumbnail(photo) {
       return photo.derivatives[jpgKey];
     }
   }
-  
+
   // For images or if no JPG found for video, get largest derivative
   // Handle numeric keys and non-numeric keys
   const numericKeys = derivativeKeys.filter(k => !isNaN(parseInt(k)));
   const sortedNumeric = numericKeys.sort((a, b) => parseInt(b) - parseInt(a));
-  
+
   if (sortedNumeric.length > 0) {
     const largestKey = sortedNumeric[0];
     return photo.derivatives[largestKey];
   }
-  
+
   // Fallback to first available derivative
   const firstKey = derivativeKeys[0];
   return firstKey ? photo.derivatives[firstKey] : null;
@@ -1224,12 +1292,12 @@ app.get(/^\/api\/icon\/(.+)$/, async (req, res) => {
   try {
     // Extract token from regex match (everything after /api/icon/)
     let token = req.params[0];
-    
+
     // Remove .png extension if present
     if (token.endsWith('.png')) {
       token = token.slice(0, -4);
     }
-    
+
     // Decode URL-encoded characters (like +, =, etc.)
     try {
       token = decodeURIComponent(token);
@@ -1237,7 +1305,7 @@ app.get(/^\/api\/icon\/(.+)$/, async (req, res) => {
       // If decode fails, use token as-is
       console.warn('Failed to decode token, using as-is:', e.message);
     }
-    
+
     if (!token) {
       return res.status(400).json({ error: 'Token is required' });
     }
@@ -1257,7 +1325,7 @@ app.get(/^\/api\/icon\/(.+)$/, async (req, res) => {
 
     // Generate or get cached icon
     const iconFile = await generateAlbumIcon(decryptedToken);
-    
+
     if (!iconFile || !existsSync(iconFile)) {
       // Fallback to default icon if generation failed
       const defaultIconPath = path.join(__dirname, 'public', 'apple-touch-icon.png');
@@ -1287,7 +1355,7 @@ app.get(/^\/api\/icon\/(.+)$/, async (req, res) => {
 app.get('/api/badge-check/:token', async (req, res) => {
   try {
     let { token } = req.params;
-    
+
     if (!token) {
       return res.status(400).json({ error: 'Album token is required' });
     }
@@ -1326,13 +1394,13 @@ function trackTokenForRefresh(decryptedToken) {
     lastAccessed: Date.now(),
     decryptedToken: decryptedToken
   });
-  
+
   // Clean up old tokens if we exceed max
   if (recentlyAccessedTokens.size > MAX_TRACKED_TOKENS) {
     const now = Date.now();
     const entries = Array.from(recentlyAccessedTokens.entries());
     entries.sort((a, b) => a[1].lastAccessed - b[1].lastAccessed);
-    
+
     // Remove oldest tokens until we're under the limit
     const toRemove = entries.slice(0, entries.length - MAX_TRACKED_TOKENS);
     toRemove.forEach(([token]) => recentlyAccessedTokens.delete(token));
@@ -1343,7 +1411,7 @@ function trackTokenForRefresh(decryptedToken) {
 async function refreshTokenInBackground(decryptedToken) {
   try {
     const freshData = await getImages(decryptedToken);
-    
+
     // Trigger video augmentation processing for all videos in background
     if (freshData.photos && Array.isArray(freshData.photos)) {
       freshData.photos.forEach(photo => {
@@ -1364,7 +1432,7 @@ async function refreshTokenInBackground(decryptedToken) {
         }
       });
     }
-    
+
     const freshRewritten = await rewriteImageUrls(freshData, decryptedToken);
     await setCachedData(decryptedToken, freshRewritten, false);
     console.log(`Background refresh complete for album: ${decryptedToken}`);
@@ -1380,7 +1448,7 @@ schedule.scheduleJob('*/30 * * * *', async () => {
   // Run every 30 minutes
   const now = Date.now();
   const tokensToRefresh = [];
-  
+
   // Collect tokens that should be refreshed (recently accessed and not too old)
   for (const [decryptedToken, info] of recentlyAccessedTokens.entries()) {
     const age = now - info.lastAccessed;
@@ -1391,14 +1459,14 @@ schedule.scheduleJob('*/30 * * * *', async () => {
       recentlyAccessedTokens.delete(decryptedToken);
     }
   }
-  
+
   if (tokensToRefresh.length === 0) {
     console.log('No tokens to refresh');
     return;
   }
-  
+
   console.log(`Starting background refresh for ${tokensToRefresh.length} token(s)...`);
-  
+
   // Refresh tokens in parallel (but limit concurrency to avoid overwhelming iCloud)
   const BATCH_SIZE = 5;
   for (let i = 0; i < tokensToRefresh.length; i += BATCH_SIZE) {
@@ -1408,13 +1476,13 @@ schedule.scheduleJob('*/30 * * * *', async () => {
         refreshTokenInBackground(decryptedToken)
       )
     );
-    
+
     // Small delay between batches to be respectful to iCloud API
     if (i + BATCH_SIZE < tokensToRefresh.length) {
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
-  
+
   console.log(`Background refresh completed for ${tokensToRefresh.length} token(s)`);
 });
 
@@ -1430,7 +1498,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
     // Use file modification time if available, otherwise use current time
     const mtime = stat && stat.mtime ? stat.mtime.getTime() : Date.now();
     const lastModified = stat && stat.mtime ? stat.mtime.toUTCString() : new Date().toUTCString();
-    
+
     // Don't cache HTML files (they should always be fresh)
     if (filePath.endsWith('.html')) {
       res.set('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
@@ -1466,8 +1534,8 @@ app.use(express.static(path.join(__dirname, 'public'), {
 // Video processing queue to limit concurrent processing
 const VIDEO_PROCESSING_QUEUE = [];
 let ACTIVE_VIDEO_PROCESSES = 0;
-const MAX_CONCURRENT_VIDEO_PROCESSES = process.env.MAX_CONCURRENT_VIDEO_PROCESSES 
-  ? parseInt(process.env.MAX_CONCURRENT_VIDEO_PROCESSES, 10) 
+const MAX_CONCURRENT_VIDEO_PROCESSES = process.env.MAX_CONCURRENT_VIDEO_PROCESSES
+  ? parseInt(process.env.MAX_CONCURRENT_VIDEO_PROCESSES, 10)
   : 1; // Default to 1 at a time to avoid OOM
 
 // Process videos from queue
@@ -1501,15 +1569,15 @@ function queueVideoProcessing(albumToken, photoGuid, videoUrl) {
 
 // Helper function to check if a photo is a video
 function isVideo(photo) {
-  return photo.mediaAssetType === 'video' || 
-         (photo.derivatives && Object.values(photo.derivatives).some(d => 
-           d && d.url && d.url.toLowerCase().includes('.mp4')));
+  return photo.mediaAssetType === 'video' ||
+    (photo.derivatives && Object.values(photo.derivatives).some(d =>
+      d && d.url && d.url.toLowerCase().includes('.mp4')));
 }
 
 // Helper function to get video URL from photo
 function getVideoUrl(photo) {
   if (!photo || !photo.derivatives) return null;
-  
+
   // Get the largest available video
   const videoSizes = Object.keys(photo.derivatives)
     .filter(size => {
@@ -1518,7 +1586,7 @@ function getVideoUrl(photo) {
     })
     .map(Number)
     .sort((a, b) => b - a);
-  
+
   if (videoSizes.length > 0) {
     return photo.derivatives[videoSizes[0].toString()].url;
   }
@@ -1531,32 +1599,32 @@ async function getVideoDuration(videoUrl) {
     console.warn('ffprobe not available, cannot get video duration');
     return null;
   }
-  
+
   try {
     const { exec } = await import('child_process');
     const { promisify } = await import('util');
     const execAsync = promisify(exec);
-    
+
     // Ensure ffprobePath is a string (handle object exports)
     let ffprobeExecutable = ffprobePath;
     if (typeof ffprobePath === 'object' && ffprobePath !== null) {
       ffprobeExecutable = ffprobePath.path || ffprobePath.ffprobePath || null;
     }
-    
+
     if (!ffprobeExecutable || typeof ffprobeExecutable !== 'string') {
       console.warn('ffprobe path is not a valid string:', ffprobePath);
       return null;
     }
-    
+
     // Use ffprobe to get duration
     const { stdout } = await execAsync(`"${ffprobeExecutable}" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoUrl}"`);
     const duration = parseFloat(stdout.trim());
-    
+
     if (isNaN(duration) || duration <= 0) {
       console.warn(`Invalid duration from ffprobe for ${videoUrl}: ${stdout.trim()}`);
       return null;
     }
-    
+
     return Math.floor(duration); // Return duration in seconds as integer
   } catch (e) {
     console.warn(`Could not get video duration using ffprobe for ${videoUrl}:`, e.message);
@@ -1574,7 +1642,7 @@ async function extractAudioFromVideo(videoUrl, outputPath) {
 
   // Download video to temp file first (more reliable than streaming)
   const tempVideoPath = outputPath.replace('.wav', '.mp4');
-  
+
   try {
     // Download video file
     console.log(`Downloading video from: ${videoUrl.substring(0, 80)}...`);
@@ -1588,7 +1656,7 @@ async function extractAudioFromVideo(videoUrl, outputPath) {
       }
       throw new Error(`Failed to download video: ${response.status} ${response.statusText}`);
     }
-    
+
     const arrayBuffer = await response.arrayBuffer();
     await fs.writeFile(tempVideoPath, Buffer.from(arrayBuffer));
     console.log(`Video downloaded to: ${tempVideoPath}`);
@@ -1597,7 +1665,7 @@ async function extractAudioFromVideo(videoUrl, outputPath) {
     return new Promise((resolve, reject) => {
       let timeoutId;
       const timeout = 300000; // 5 minute timeout
-      
+
       const command = ffmpeg(tempVideoPath)
         .noVideo()
         .audioCodec('pcm_s16le')
@@ -1627,10 +1695,10 @@ async function extractAudioFromVideo(videoUrl, outputPath) {
           if (timeoutId) clearTimeout(timeoutId);
           console.log('Audio extraction complete');
           // Clean up temp video file
-          fs.unlink(tempVideoPath).catch(() => {}); // Don't wait, just clean up in background
+          fs.unlink(tempVideoPath).catch(() => { }); // Don't wait, just clean up in background
           resolve(outputPath);
         });
-      
+
       try {
         command.save(outputPath);
       } catch (error) {
@@ -1640,7 +1708,7 @@ async function extractAudioFromVideo(videoUrl, outputPath) {
     });
   } catch (downloadError) {
     // Clean up temp file if download failed
-    await fs.unlink(tempVideoPath).catch(() => {});
+    await fs.unlink(tempVideoPath).catch(() => { });
     throw downloadError;
   }
 }
@@ -1664,15 +1732,15 @@ async function transcribeAudio(audioPath) {
     if (!existsSync(WHISPER_MODEL_PATH)) {
       throw new Error(`Whisper model not found at ${WHISPER_MODEL_PATH}`);
     }
-    
+
     const whisper = spawn(WHISPER_EXE, [
       '-m', WHISPER_MODEL_PATH,
       '-f', audioPath,
       '--output-txt',
       '--output-words'
-    ], { 
+    ], {
       shell: false,
-      cwd: __dirname 
+      cwd: __dirname
     });
 
     whisper.stdout.on('data', (data) => {
@@ -1759,15 +1827,15 @@ Please use the following similarity value for this request: 89.`;
     });
 
     let blogContent = response.choices[0].message.content.trim();
-    
+
     // Strip markdown code fences if present (sometimes LLM wraps response despite instructions)
     blogContent = blogContent.replace(/^```markdown\n?/i, '').replace(/^```\n?/m, '').replace(/\n?```$/m, '').trim();
-    
+
     // Check if LLM detected insufficient content
     if (blogContent === '[INSUFFICIENT_CONTENT]' || blogContent.toUpperCase().includes('INSUFFICIENT_CONTENT')) {
       throw new Error('INSUFFICIENT_CONTENT');
     }
-    
+
     return blogContent;
   } catch (error) {
     console.error('OpenAI blogify error:', error);
@@ -1811,7 +1879,7 @@ async function processVideoAugmentation(albumToken, photoGuid, videoUrl) {
     // Step 1: Extract audio
     const audioFilename = `${cacheKey}.wav`;
     const audioPath = path.join(TMP_DIR, audioFilename);
-    
+
     console.log(`Extracting audio from video: ${photoGuid}`);
     try {
       await extractAudioFromVideo(videoUrl, audioPath);
@@ -1831,19 +1899,19 @@ async function processVideoAugmentation(albumToken, photoGuid, videoUrl) {
         await fs.writeFile(cacheFile, JSON.stringify(skippedAugmentation, null, 2), 'utf-8');
         return skippedAugmentation;
       }
-      
+
       // If video URL expired (401/403), don't cache as skipped - allow retry after album refresh
       if (extractError.message && extractError.message.includes('VIDEO_URL_EXPIRED')) {
         console.warn(`Video URL expired for ${photoGuid}, will retry after album refresh`);
         throw new Error(`VIDEO_URL_EXPIRED: Video URL has expired. Please refresh the album cache.`);
       }
-      
+
       // If network/timeout error, don't cache as skipped - allow retry
       if (extractError.cause && (extractError.cause.code === 'ETIMEDOUT' || extractError.message.includes('fetch failed') || extractError.message.includes('timeout'))) {
         console.warn(`Network error for video ${photoGuid}: ${extractError.message}. Will retry later.`);
         throw new Error(`NETWORK_ERROR: ${extractError.message}`);
       }
-      
+
       throw extractError; // Re-throw other errors
     }
 
@@ -1855,7 +1923,7 @@ async function processVideoAugmentation(albumToken, photoGuid, videoUrl) {
     if (!transcription || transcription.trim().length < 50) {
       console.log(`Skipping video ${photoGuid}: transcription too short (${transcription?.length || 0} chars)`);
       // Clean up
-      await fs.unlink(audioPath).catch(() => {});
+      await fs.unlink(audioPath).catch(() => { });
       // Cache the skipped state
       const skippedAugmentation = {
         photoGuid,
@@ -1877,36 +1945,36 @@ async function processVideoAugmentation(albumToken, photoGuid, videoUrl) {
       /\(.*noise.*\)/gi,
       /\(.*ambient.*\)/gi
     ];
-    
+
     // Count music markers
     let musicMarkerCount = 0;
     for (const pattern of musicMarkerPatterns) {
       const matches = normalizedTranscript.match(pattern);
       if (matches) musicMarkerCount += matches.length;
     }
-    
+
     // Remove music markers to check actual content
     let contentWithoutMarkers = normalizedTranscript;
     for (const pattern of musicMarkerPatterns) {
       contentWithoutMarkers = contentWithoutMarkers.replace(pattern, ' ').trim();
     }
-    
+
     // Remove punctuation and extra whitespace to count meaningful words
     const meaningfulWords = contentWithoutMarkers
       .replace(/[^\w\s]/g, ' ')
       .split(/\s+/)
       .filter(word => word.length > 2); // Only words longer than 2 chars
-    
+
     // Check if transcription is mostly music markers or has very few meaningful words
     const markerPercentage = (musicMarkerCount * 20) / transcription.length; // Rough estimate
     const meaningfulWordCount = meaningfulWords.length;
-    
+
     // More lenient threshold: skip only if >70% music markers OR <15 meaningful words
     // 15 words is reasonable for a short video, and 47 words (like the user's example) should definitely pass
     if (markerPercentage > 0.7 || meaningfulWordCount < 15) {
       console.log(`Skipping video ${photoGuid}: low-quality transcription (${meaningfulWordCount} meaningful words, ${musicMarkerCount} music markers, ${(markerPercentage * 100).toFixed(1)}% markers)`);
       // Clean up
-      await fs.unlink(audioPath).catch(() => {});
+      await fs.unlink(audioPath).catch(() => { });
       // Cache the skipped state
       const skippedAugmentation = {
         photoGuid,
@@ -1933,7 +2001,7 @@ async function processVideoAugmentation(albumToken, photoGuid, videoUrl) {
       if (blogifyError.message === 'INSUFFICIENT_CONTENT') {
         console.log(`Skipping video ${photoGuid}: LLM detected insufficient content`);
         // Clean up
-        await fs.unlink(audioPath).catch(() => {});
+        await fs.unlink(audioPath).catch(() => { });
         // Cache the skipped state
         const skippedAugmentation = {
           photoGuid,
@@ -1965,14 +2033,14 @@ async function processVideoAugmentation(albumToken, photoGuid, videoUrl) {
     await fs.writeFile(cacheFile, JSON.stringify(augmentation, null, 2), 'utf-8');
 
     // Clean up temporary audio file
-    await fs.unlink(audioPath).catch(() => {});
+    await fs.unlink(audioPath).catch(() => { });
 
     console.log(`Video augmentation complete for ${photoGuid}`);
     return augmentation;
 
   } catch (error) {
     console.error(`Error processing video augmentation for ${photoGuid}:`, error);
-    
+
     // Don't cache errors for network issues or expired URLs - allow retry
     if (error.message && (
       error.message.includes('VIDEO_URL_EXPIRED') ||
@@ -1983,11 +2051,11 @@ async function processVideoAugmentation(albumToken, photoGuid, videoUrl) {
     )) {
       // Delete any existing cache file so it can be retried
       if (existsSync(cacheFile)) {
-        await fs.unlink(cacheFile).catch(() => {});
+        await fs.unlink(cacheFile).catch(() => { });
       }
       console.log(`Video augmentation failed with transient error for ${photoGuid}, cache cleared for retry`);
     }
-    
+
     throw error;
   }
 }
@@ -2049,16 +2117,16 @@ app.get('/api/video-augmentation/:albumToken/:photoGuid', async (req, res) => {
         });
 
       // Return processing status immediately
-      return res.json({ 
-        status: 'processing', 
-        message: 'Video augmentation is being processed in the background. Check back in a few moments.' 
+      return res.json({
+        status: 'processing',
+        message: 'Video augmentation is being processed in the background. Check back in a few moments.'
       });
     } catch (error) {
       console.error(`Error starting video augmentation processing for ${photoGuid}:`, error);
       // Return processing status even on error (processing will retry on next request)
-      return res.json({ 
-        status: 'processing', 
-        message: 'Video augmentation processing will start shortly.' 
+      return res.json({
+        status: 'processing',
+        message: 'Video augmentation processing will start shortly.'
       });
     }
 
@@ -2072,7 +2140,7 @@ app.get('/api/video-augmentation/:albumToken/:photoGuid', async (req, res) => {
 app.get('/feed/:token/manifest.json', async (req, res) => {
   try {
     const { token } = req.params;
-    
+
     // Get album metadata for manifest name
     let decryptedToken;
     try {
@@ -2080,28 +2148,28 @@ app.get('/feed/:token/manifest.json', async (req, res) => {
     } catch (error) {
       decryptedToken = null;
     }
-    
+
     let manifestName = "Photo Album";
     let manifestShortName = "Album";
-    
+
     if (decryptedToken) {
       const cached = await getCachedData(decryptedToken);
       if (cached && cached.data && cached.data.metadata) {
         const metadata = cached.data.metadata;
         if (metadata.streamName) {
           manifestName = metadata.streamName;
-          manifestShortName = metadata.streamName.length > 12 
-            ? metadata.streamName.substring(0, 12) + '...' 
+          manifestShortName = metadata.streamName.length > 12
+            ? metadata.streamName.substring(0, 12) + '...'
             : metadata.streamName;
         } else if (metadata.userFirstName) {
           manifestName = `${metadata.userFirstName}'s Feed`;
-          manifestShortName = metadata.userFirstName.length > 12 
-            ? metadata.userFirstName.substring(0, 12) + '...' 
+          manifestShortName = metadata.userFirstName.length > 12
+            ? metadata.userFirstName.substring(0, 12) + '...'
             : metadata.userFirstName;
         }
       }
     }
-    
+
     const manifest = {
       name: manifestName,
       short_name: manifestShortName,
@@ -2145,16 +2213,16 @@ app.get('/:albumId/manifest.json', async (req, res, next) => {
   if (req.path.startsWith('/api')) {
     return next();
   }
-  
+
   // Exclude paths with file extensions
   const hasExtension = /\.[a-zA-Z0-9]+$/.test(req.path);
   if (hasExtension) {
     return next();
   }
-  
+
   try {
     const { albumId } = req.params;
-    
+
     // Get album metadata for manifest name
     let decryptedToken;
     try {
@@ -2162,28 +2230,28 @@ app.get('/:albumId/manifest.json', async (req, res, next) => {
     } catch (error) {
       decryptedToken = null;
     }
-    
+
     let manifestName = "Photo Album";
     let manifestShortName = "Album";
-    
+
     if (decryptedToken) {
       const cached = await getCachedData(decryptedToken);
       if (cached && cached.data && cached.data.metadata) {
         const metadata = cached.data.metadata;
         if (metadata.streamName) {
           manifestName = metadata.streamName;
-          manifestShortName = metadata.streamName.length > 12 
-            ? metadata.streamName.substring(0, 12) + '...' 
+          manifestShortName = metadata.streamName.length > 12
+            ? metadata.streamName.substring(0, 12) + '...'
             : metadata.streamName;
         } else if (metadata.userFirstName) {
           manifestName = `${metadata.userFirstName}'s Album`;
-          manifestShortName = metadata.userFirstName.length > 12 
-            ? metadata.userFirstName.substring(0, 12) + '...' 
+          manifestShortName = metadata.userFirstName.length > 12
+            ? metadata.userFirstName.substring(0, 12) + '...'
             : metadata.userFirstName;
         }
       }
     }
-    
+
     const manifest = {
       name: manifestName,
       short_name: manifestShortName,
@@ -2226,11 +2294,11 @@ app.get('/feed/:token', async (req, res, next) => {
   if (req.path.startsWith('/api')) {
     return next();
   }
-  
+
   // Inject dynamic icon URL into HTML
   try {
     let { token } = req.params;
-    
+
     // Decrypt token if encrypted
     let decryptedToken;
     try {
@@ -2245,20 +2313,20 @@ app.get('/feed/:token', async (req, res, next) => {
       const cached = await getCachedData(decryptedToken);
       let albumTitle = 'Photo Album';
       let appTitle = 'Photo Album';
-      
+
       console.log(`Feed route: Getting cached data for token: ${decryptedToken.substring(0, 10)}...`);
       if (cached && cached.data && cached.data.metadata) {
         const metadata = cached.data.metadata;
         console.log(`Feed route: Found metadata:`, { streamName: metadata.streamName, userFirstName: metadata.userFirstName });
         if (metadata.streamName) {
           albumTitle = `${metadata.streamName} - Vlog Feed`;
-          appTitle = metadata.streamName.length > 12 
-            ? metadata.streamName.substring(0, 12) + '...' 
+          appTitle = metadata.streamName.length > 12
+            ? metadata.streamName.substring(0, 12) + '...'
             : metadata.streamName;
         } else if (metadata.userFirstName) {
           albumTitle = `${metadata.userFirstName}'s Feed - Vlog Feed`;
-          appTitle = metadata.userFirstName.length > 12 
-            ? metadata.userFirstName.substring(0, 12) + '...' 
+          appTitle = metadata.userFirstName.length > 12
+            ? metadata.userFirstName.substring(0, 12) + '...'
             : metadata.userFirstName;
         } else if (metadata.contributorFullName) {
           const shortName = metadata.contributorFullName.split(' ')[0];
@@ -2268,46 +2336,46 @@ app.get('/feed/:token', async (req, res, next) => {
       } else {
         console.log(`Feed route: No cached data or metadata found`);
       }
-      
+
       console.log(`Feed route: Using titles - albumTitle: "${albumTitle}", appTitle: "${appTitle}"`);
-      
+
       // Read HTML file
       const htmlPath = path.join(__dirname, 'public', 'feed.html');
       let html = await fs.readFile(htmlPath, 'utf-8');
-      
+
       // Replace apple-touch-icon URL with dynamic one
       const iconUrl = `/api/icon/${token}.png`;
       html = html.replace(
         /<link rel="apple-touch-icon"[^>]*>/g,
         `<link rel="apple-touch-icon" sizes="180x180" href="${iconUrl}" />`
       );
-      
+
       // Replace manifest URL with dynamic one
       const manifestUrl = `/feed/${token}/manifest.json`;
       html = html.replace(
         /<link rel="manifest"[^>]*>/g,
         `<link rel="manifest" href="${manifestUrl}" />`
       );
-      
+
       // Replace title
       html = html.replace(
         /<title>.*?<\/title>/g,
         `<title>${albumTitle}</title>`
       );
-      
+
       // Replace apple-mobile-web-app-title meta tag - use a more specific pattern
       // Escape special characters in appTitle
       const escapedAppTitle = appTitle.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
       const metaTagPattern = /<meta\s+id="apple-mobile-web-app-title"[^>]*>/i;
       const replacement = `<meta id="apple-mobile-web-app-title" name="apple-mobile-web-app-title" content="${escapedAppTitle}" />`;
-      
+
       if (metaTagPattern.test(html)) {
         html = html.replace(metaTagPattern, replacement);
         console.log(`Feed route: Replaced apple-mobile-web-app-title meta tag`);
       } else {
         console.log(`Feed route: WARNING - apple-mobile-web-app-title meta tag not found in HTML`);
       }
-      
+
       // Add aggressive no-cache headers for HTML to prevent iOS caching
       res.set('Content-Type', 'text/html');
       res.set('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
@@ -2337,17 +2405,17 @@ app.get('/:albumId', async (req, res, next) => {
   if (req.path.startsWith('/api')) {
     return next();
   }
-  
+
   // Exclude paths with file extensions (let static middleware handle them)
   const hasExtension = /\.[a-zA-Z0-9]+$/.test(req.path);
   if (hasExtension) {
     return next();
   }
-  
+
   // Inject dynamic icon URL into HTML
   try {
     const { albumId } = req.params;
-    
+
     // Decrypt token if encrypted
     let decryptedToken;
     try {
@@ -2362,20 +2430,20 @@ app.get('/:albumId', async (req, res, next) => {
       const cached = await getCachedData(decryptedToken);
       let albumTitle = 'Photo Album';
       let appTitle = 'Photo Album';
-      
+
       console.log(`Index route: Getting cached data for token: ${decryptedToken.substring(0, 10)}...`);
       if (cached && cached.data && cached.data.metadata) {
         const metadata = cached.data.metadata;
         console.log(`Index route: Found metadata:`, { streamName: metadata.streamName, userFirstName: metadata.userFirstName });
         if (metadata.streamName) {
           albumTitle = `${metadata.streamName} - Photo Album`;
-          appTitle = metadata.streamName.length > 12 
-            ? metadata.streamName.substring(0, 12) + '...' 
+          appTitle = metadata.streamName.length > 12
+            ? metadata.streamName.substring(0, 12) + '...'
             : metadata.streamName;
         } else if (metadata.userFirstName) {
           albumTitle = `${metadata.userFirstName}'s Album - Photo Album`;
-          appTitle = metadata.userFirstName.length > 12 
-            ? metadata.userFirstName.substring(0, 12) + '...' 
+          appTitle = metadata.userFirstName.length > 12
+            ? metadata.userFirstName.substring(0, 12) + '...'
             : metadata.userFirstName;
         } else if (metadata.contributorFullName) {
           const shortName = metadata.contributorFullName.split(' ')[0];
@@ -2385,46 +2453,46 @@ app.get('/:albumId', async (req, res, next) => {
       } else {
         console.log(`Index route: No cached data or metadata found`);
       }
-      
+
       console.log(`Index route: Using titles - albumTitle: "${albumTitle}", appTitle: "${appTitle}"`);
-      
+
       // Read HTML file
       const htmlPath = path.join(__dirname, 'public', 'index.html');
       let html = await fs.readFile(htmlPath, 'utf-8');
-      
+
       // Replace apple-touch-icon URL with dynamic one
       const iconUrl = `/api/icon/${albumId}.png`;
       html = html.replace(
         /<link rel="apple-touch-icon"[^>]*>/g,
         `<link rel="apple-touch-icon" sizes="180x180" href="${iconUrl}" />`
       );
-      
+
       // Replace manifest URL with dynamic one
       const manifestUrl = `/${albumId}/manifest.json`;
       html = html.replace(
         /<link rel="manifest"[^>]*>/g,
         `<link rel="manifest" href="${manifestUrl}" />`
       );
-      
+
       // Replace title
       html = html.replace(
         /<title>.*?<\/title>/g,
         `<title>${albumTitle}</title>`
       );
-      
+
       // Replace apple-mobile-web-app-title meta tag - use a more specific pattern
       // Escape special characters in appTitle
       const escapedAppTitle = appTitle.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
       const metaTagPattern = /<meta\s+id="apple-mobile-web-app-title"[^>]*>/i;
       const replacement = `<meta id="apple-mobile-web-app-title" name="apple-mobile-web-app-title" content="${escapedAppTitle}" />`;
-      
+
       if (metaTagPattern.test(html)) {
         html = html.replace(metaTagPattern, replacement);
         console.log(`Index route: Replaced apple-mobile-web-app-title meta tag`);
       } else {
         console.log(`Index route: WARNING - apple-mobile-web-app-title meta tag not found in HTML`);
       }
-      
+
       // Add aggressive no-cache headers for HTML to prevent iOS caching
       res.set('Content-Type', 'text/html');
       res.set('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
