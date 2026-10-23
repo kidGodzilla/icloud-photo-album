@@ -22,5 +22,8 @@
     "openai": "^4.67.3",
     "sharp": "^0.33.5",
     "simple-encryptor": "^4.0.0"
+  },
+  "engines": {
+    "node": "^24.22.1"
   }
 }
