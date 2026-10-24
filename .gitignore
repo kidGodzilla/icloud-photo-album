@@ -6,3 +6,4 @@ tmp/
 whisper.cpp/
 .DS_Store
 /examples
+.env.production

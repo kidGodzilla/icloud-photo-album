@@ -1,0 +1,15 @@
+{
+  "domains": [
+    "icloudphotos.ns576087.ip-51-222-82.net",
+    "icloudphotos.jamesfuthey.com"
+  ],
+  "scale": {
+    "web": 1
+  },
+  "resources": {
+    "memory": "16g"
+  },
+  "storage": [
+    "icloudphotos:/app/storage"
+  ]
+}
